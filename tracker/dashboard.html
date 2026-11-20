@@ -1593,7 +1593,7 @@ function evidenceRows(rows) {
   const row = (icon, title, sub, tag, on) => `<div class="erow"><img src="assets/${icon}" alt=""><div class="etext"><b>${title}</b><span>${sub}</span></div>${tag}<span class="switch${on ? " on" : ""}" role="img" aria-label="${on ? "Collected" : "Not collected"}"></span></div>`;
   return row("icon-bubble.svg", "Prompts to Claude Code", texts ? `${texts} of ${n} prompts · keys and secrets redacted` : `${n} prompts · text not included`, texts ? here : `<span class="tag">Not included</span>`, texts > 0) +
     row("icon-keyboard.svg", "Focus & typing rhythm", typed ? `${typed} prompts · counts and timing only, never the keys pressed` : "Not recorded for this data", `<span class="tag">Stays on this computer</span>`, typed > 0) +
-    row("icon-doc.svg", "Jev judgments", judged ? `${judged} prompts labelled · prompt text sent to Hack Club AI to judge` : "Not run for this data", judged ? `<span class="tag effort">Sent for judging</span>` : `<span class="tag">Not sent</span>`, judged > 0) +
+    row("icon-doc.svg", "Jev judgments", judged ? `${judged} prompts labelled · prompt text sent to TypeSafe to judge` : "Not run for this data", judged ? `<span class="tag effort">Sent for judging</span>` : `<span class="tag">Not sent</span>`, judged > 0) +
     row("icon-film.svg", "Prompt replays", replays ? `${replays} replays · letter and space layout only` : "None recorded", `<span class="tag">Stays on this computer</span>`, replays > 0) +
     row("icon-git.svg", "Git commits", "Not collected yet", `<span class="tag">Not collected</span>`, false) +
     row("icon-camera.svg", "Webcam and screen", "Never collected", `<span class="tag">Not collected</span>`, false);

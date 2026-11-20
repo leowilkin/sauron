@@ -1014,7 +1014,7 @@ def cmd_label_history(args):
     import sync
     own_key = jev_judge.load_key()
     if not (own_key or sync.enabled()):
-        print("Connect first (sauron connect https://SERVER), or save a Hack Club AI key (sauron jev --save-key).")
+        print("Connect first (sauron connect https://SERVER), or save a TypeSafe API key (sauron jev --save-key).")
         return 1
     since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - args.days * 86400))
     cur = jev_judge._config().get("jev_since")
@@ -1023,7 +1023,7 @@ def cmd_label_history(args):
         return 0
     print("This sends the text of your prompts from the last %d days, with secrets removed (best-effort), to %s, "
           "which has Jev label them. Only the labels are kept." % (
-              args.days, "Hack Club AI" if own_key else "the Sauron server"))
+              args.days, "TypeSafe" if own_key else "the Sauron server"))
     if not args.yes:
         try:
             ok = input("Send them? [y/N] ").strip().lower() in ("y", "yes")

@@ -234,7 +234,7 @@ class TestServer(unittest.TestCase):
             body = {"prompt_id": "p9", "state": {"prompt": "how does this work? key=sk-hc-v1-abcdefghijklmnopqrstuv"}}
             h = {"Authorization": "Bearer " + self.key}
             self.assertEqual(self.c.post("/api/label", json=body, headers=h).status_code, 503)  # no key on server
-            os.environ["JEV_API_KEY"] = "shared"
+            os.environ["TYPESAFE_API_KEY"] = "shared"
             r = self.c.post("/api/label", json=body, headers=h)
             self.assertEqual(r.status_code, 200, r.text)
             self.assertEqual(r.json()["pattern"], "concept")
@@ -250,7 +250,7 @@ class TestServer(unittest.TestCase):
             self.assertEqual(self.c.post("/api/label", json=body, headers={"Authorization": "Bearer nope"}).status_code, 401)
         finally:
             jev_judge.ask_jev = orig
-            os.environ.pop("JEV_API_KEY", None)
+            os.environ.pop("TYPESAFE_API_KEY", None)
             os.environ.pop("LABEL_DAILY_LIMIT", None)
 
     def test_client_labels_through_the_server_without_its_own_key(self):

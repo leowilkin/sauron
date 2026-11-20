@@ -151,7 +151,7 @@ def _start_jev(paths):
     """Label new prompts with Jev in the background (own key, or through the Sauron server). Never fails the hook."""
     try:
         d = eventlog.data_dir()
-        if not (os.environ.get("JEV_API_KEY") or os.path.exists(os.path.join(d, "jev.key"))
+        if not (os.environ.get("TYPESAFE_API_KEY") or os.path.exists(os.path.join(d, "typesafe.key"))
                 or os.path.exists(os.path.join(d, "server.key"))):
             return
         paths = [p for p in paths if p]

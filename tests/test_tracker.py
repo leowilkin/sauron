@@ -977,7 +977,7 @@ class TestReviewFindings2(Base):
     @unittest.skipIf(os.name == "nt", "POSIX permissions")
     def test_save_key_tightens_existing_permissions(self):
         import jev_judge, getpass
-        path = os.path.join(self.data, "jev.key")
+        path = os.path.join(self.data, "typesafe.key")
         os.makedirs(self.data, exist_ok=True)
         write(path, "old")
         os.chmod(path, 0o644)
@@ -1014,9 +1014,9 @@ class TestJevAuto(Base):
         super().setUp()
         import jev_judge
         self.j = jev_judge
-        os.environ.pop("JEV_API_KEY", None)
+        os.environ.pop("TYPESAFE_API_KEY", None)
         os.makedirs(self.data, exist_ok=True)
-        write(os.path.join(self.data, "jev.key"), "k")
+        write(os.path.join(self.data, "typesafe.key"), "k")
         jev_judge._set_config(jev_since="2026-11-20T10:01:00Z")
         self.sent = []
 
@@ -1044,7 +1044,7 @@ class TestJevAuto(Base):
 
     def test_nothing_sent_without_key(self):
         path = self._transcript()
-        os.remove(os.path.join(self.data, "jev.key"))
+        os.remove(os.path.join(self.data, "typesafe.key"))
         self.assertEqual(self.j.auto([path], ask=self.fake), 0)
         self.assertEqual(self.sent, [])
 

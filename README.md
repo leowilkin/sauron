@@ -131,13 +131,13 @@ This writes `site/index.html` and `site/data.json`, the same dashboard working f
 
 ### Research: label prompts with Jev
 
-`tracker/jev_judge.py` asks Jev (TypeSafe's classification model, via Hack Club AI) what each prompt in a set of transcripts is doing: directing, delegating, reviewing the AI's work, handing errors back, asking to understand, and so on. It also scores how much of the person's own thinking the prompt shows. Jev sees **text only**, never the tracker's timing or size signals, so its labels can be compared with those signals without circularity.
+`tracker/jev_judge.py` asks Jev (TypeSafe's classification model) what each prompt in a set of transcripts is doing: directing, delegating, reviewing the AI's work, handing errors back, asking to understand, and so on. It also scores how much of the person's own thinking the prompt shows. Jev sees **text only**, never the tracker's timing or size signals, so its labels can be compared with those signals without circularity.
 
 ```sh
-JEV_API_KEY=... sauron jev ./their-transcripts --out ~/ai-data/jev/NAME.jsonl
+TYPESAFE_API_KEY=... sauron jev ./their-transcripts --out ~/ai-data/jev/NAME.jsonl
 ```
 
-**This sends prompt text to ai.hackclub.com, and from there to TypeSafe.** Use it only with the transcript owner's agreement. The output file holds labels and ids only. Place it in `jev/` next to the matching imported log (same file name), and `aitrack serve` adds a **prompt patterns** section for that log. This is a research tool for working out what productive struggle looks like. It's not part of the passive tracker.
+**This sends prompt text to TypeSafe (api.typesafe.ai).** Use it only with the transcript owner's agreement. The output file holds labels and ids only. Place it in `jev/` next to the matching imported log (same file name), and `aitrack serve` adds a **prompt patterns** section for that log. This is a research tool for working out what productive struggle looks like. It's not part of the passive tracker.
 
 ### Backfill history from Claude Code transcripts
 
@@ -309,6 +309,8 @@ Each line's hash and the hash it links to are sent as well. The server keeps eve
 Running it yourself: `pip install -r server/requirements.txt`, then `uvicorn server.app:app` from the repo root. Settings:
 - `PUBLIC_ORIGIN` and `HCA_CLIENT_ID` / `HCA_CLIENT_SECRET`, from an app at auth.hackclub.com/developer/apps with redirect `<origin>/auth/callback`
 - `DATABASE_URL` for Postgres. Without it the server uses a local SQLite file.
+- `TYPESAFE_API_KEY`, a key from console.typesafe.ai/keys, which labels everyone's prompts with Jev (`/api/label`). Without it, labelling through the server is off.
+- `LABEL_DAILY_LIMIT`, the most prompts labelled per person per day with that key (default 1500).
 
 The session secret is generated and kept in the database unless `SESSION_SECRET` is set.
 
@@ -334,13 +336,13 @@ Sauron's default export carries the same kind of data:
 
 Session ids are replaced with s1, s2…. If `~/.wakatime.cfg` sets `hide_project_names` or `hide_file_names`, the export follows it, and `--hide-project-names` / `--hide-file-names` do the same per export.
 
-The one exception is Jev. Effort can't be estimated without knowing what each prompt was doing, so Sauron sends prompt text through its server to Hack Club AI's Jev model and keeps only the label it returns (category and scores). The server uses one shared key, never stores the text, and caps how many prompts each person can have labelled per day. Setup asks for agreement to this before installing. Apart from that, anything Hackatime never receives needs you to ask for it. That means prompt text, AI reply text, and keystroke-level typing replays (Hackatime sees at most one heartbeat every couple of minutes). The hooks never log prompt text at all. These commands go beyond the default, and each is opt-in:
+The one exception is Jev. Effort can't be estimated without knowing what each prompt was doing, so Sauron sends prompt text through its server to TypeSafe's Jev model and keeps only the label it returns (category and scores). The server uses one shared key, never stores the text, and caps how many prompts each person can have labelled per day. Setup asks for agreement to this before installing. Apart from that, anything Hackatime never receives needs you to ask for it. That means prompt text, AI reply text, and keystroke-level typing replays (Hackatime sees at most one heartbeat every couple of minutes). The hooks never log prompt text at all. These commands go beyond the default, and each is opt-in:
 
 | Command | What it reads or sends | Default |
 | --- | --- | --- |
 | `aitrack serve` | Reads prompt text from `~/.claude/projects` to show it next to each prompt | Off. Pass `--prompt-text` (optionally with a folder) |
 | `aitrack export-site` | Writes a snapshot you may then publish | The Hackatime-level data above. Prompt text and typing replays only with `--prompt-text` / `--include-replays`. Hide names with `--hide-project-names` / `--hide-file-names` or your `~/.wakatime.cfg`. It prints what's in and what's out |
-| Jev labelling | **Sends each new prompt's text, your previous prompt, and the end of the AI's previous reply to the Sauron server, which asks Hack Club AI's Jev** using one shared key. Only the returned label is kept, on your computer and on the server | **Required for effort.** Runs in the background after each turn once you've run `sauron connect`, for prompts sent from then on. Capped per person per day. Running Jev with your own key (`sauron jev --save-key`) also works, and then prompts go straight to Hack Club AI |
+| Jev labelling | **Sends each new prompt's text, your previous prompt, and the end of the AI's previous reply to the Sauron server, which asks TypeSafe's Jev** using one shared key. Only the returned label is kept, on your computer and on the server | **Required for effort.** Runs in the background after each turn once you've run `sauron connect`, for prompts sent from then on. Capped per person per day. Running Jev with your own key (`sauron jev --save-key`) also works, and then prompts go straight to TypeSafe |
 | `presence.py` | Samples idle seconds and the *category* of the front app (terminal, editor, browser…), never names or titles | Off. `{"presence": true}` in `~/.ai-tracker/config.json` |
 
 Nothing else leaves your machine.

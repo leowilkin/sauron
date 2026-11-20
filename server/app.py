@@ -7,7 +7,7 @@ Environment:
   SESSION_SECRET       optional; generated and kept in the database when unset
   ADMINS               comma-separated Hack Club Auth ids or Slack ids who are always admins (not usernames:
                        anyone can pick a username that isn't taken)
-  JEV_API_KEY          the one Hack Club AI key used to label everyone's prompts (POST /api/label)
+  TYPESAFE_API_KEY     the one TypeSafe API key used to label everyone's prompts (POST /api/label)
   LABEL_DAILY_LIMIT    most prompts labelled per user per day with that key (default 1500)
   DATABASE_URL         postgres://... (SQLite file when unset, for local runs)
 
@@ -471,7 +471,7 @@ async def label(request: Request):
     """Label one prompt with Jev using the server's key. The text is used for this one call and never
     stored or logged; only the label is kept, exactly as if the device had sent it."""
     k = device(request)
-    key = os.environ.get("JEV_API_KEY")
+    key = os.environ.get("TYPESAFE_API_KEY")
     if not key:
         raise HTTPException(503, "labelling isn't set up on this server")
     body = await request.json()

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Label each prompt in Claude Code transcripts with Jev (TypeSafe's System One
-model, via Hack Club AI) for research on what productive struggle looks like.
+model) for research on what productive struggle looks like.
 
-  JEV_API_KEY=... python3 jev_judge.py TRANSCRIPTS_DIR --out labels.jsonl [--limit N]
+  TYPESAFE_API_KEY=... python3 jev_judge.py TRANSCRIPTS_DIR --out labels.jsonl [--limit N]
 
 PRIVACY: this sends prompt text and the end of the AI's previous reply to
-ai.hackclub.com (and on to TypeSafe). Use it only on transcripts whose owner
+TypeSafe (api.typesafe.ai). Use it only on transcripts whose owner
 agreed to that. The output file holds labels and ids only, never text.
 
 Jev is shown text only, not timing or sizes, so its labels stay independent
@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import eventlog  # noqa: E402
 import importer  # noqa: E402
 
-ENDPOINT = "https://ai.hackclub.com/proxy/v1/jev/systemone"
+ENDPOINT = "https://api.typesafe.ai/v1/systemone"
 MODEL = "jev-latest"
 MAX_PROMPT = 4000
 MAX_PREV = 1500
@@ -198,11 +198,11 @@ def flatten(answers):
 
 
 def load_key():
-    key = os.environ.get("JEV_API_KEY")
+    key = os.environ.get("TYPESAFE_API_KEY")
     if key:
         return key.strip()
     try:
-        with open(os.path.join(eventlog.data_dir(), "jev.key"), encoding="utf-8") as f:
+        with open(os.path.join(eventlog.data_dir(), "typesafe.key"), encoding="utf-8") as f:
             return f.read().strip() or None
     except OSError:
         return None
@@ -383,7 +383,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="sauron jev", description=__doc__.split("\n\n")[0])
     ap.add_argument("src", nargs="?")
     ap.add_argument("--save-key", action="store_true",
-                    help="type your Hack Club AI key at a hidden prompt and save it, readable only by you")
+                    help="type your TypeSafe API key at a hidden prompt and save it, readable only by you")
     ap.add_argument("--out")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--workers", type=int, default=4)
@@ -396,12 +396,12 @@ def main(argv=None):
         return 0
     if args.save_key:
         import getpass
-        k = getpass.getpass("Hack Club AI key (input hidden): ").strip()
+        k = getpass.getpass("TypeSafe API key (input hidden): ").strip()
         if not k:
             print("Nothing saved.")
             return 1
         eventlog.make_data_dir()
-        path = os.path.join(eventlog.data_dir(), "jev.key")
+        path = os.path.join(eventlog.data_dir(), "typesafe.key")
         # Write a fresh 0600 file and swap it in, so an old key file's looser permissions don't carry over.
         tmp = path + ".tmp"
         if os.path.exists(tmp):
@@ -421,7 +421,7 @@ def main(argv=None):
         ap.error("give a transcripts folder and --out, or use --save-key")
     key = load_key()
     if not key:
-        print("No Hack Club AI key: set JEV_API_KEY, or save it to %s" % os.path.join(eventlog.data_dir(), "jev.key"))
+        print("No TypeSafe API key: set TYPESAFE_API_KEY, or save it to %s" % os.path.join(eventlog.data_dir(), "typesafe.key"))
         return 1
 
     jobs = jobs_from([args.src], since=args.since)
