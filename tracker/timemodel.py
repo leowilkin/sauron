@@ -37,6 +37,19 @@ agent run writing 4,000 lines, then a 36-hour absence. Crediting the full
 Each reply gap is also kept as a "read" observation (gap vs read_s), so a
 report can flag replies far faster than the reading would take.
 
+Adapters. A field an adapter leaves out is unknown, never zero, so time is
+credited only for what some adapter actually saw. Two things depend on what the
+adapter could see:
+
+  origin  a prompt_sent with origin "agent" (another agent or a plugin sent it)
+       or "other" (another person did) earns no writing time, and the reply to
+       it earns no reading time. The reply before it still counts as read. Without origin (or with "you"), the prompt
+       counts as yours: adapters leave it out when they can't tell.
+  caps  the optional event kinds the adapter can emit, listed on session_start.
+       A tool that can't report session_end (Amp) gets the break credit for its
+       last reply, min(read_s, idle) + thinking, instead of nothing. Sessions
+       without caps come from Claude Code, which reports everything.
+
 Step 2: segments from every session are laid on one timeline, and each moment
 is credited to exactly one project, so a day's total can never exceed wall-clock
 time, even with 5 sessions open at once. Where segments overlap:
@@ -142,6 +155,11 @@ def _diff_lines_by_prompt(evs):
     return out
 
 
+def yours(prompt_event):
+    """True unless the adapter knows someone or something else sent this prompt."""
+    return prompt_event.get("origin") not in ("agent", "other")
+
+
 def calibrated(name, default):
     """A personal constant saved by `sauron presence --fit --apply` in config.json, or the default."""
     import json
@@ -168,6 +186,7 @@ def session_segments(evs, idle_s, reads=None, pace=TYPE_CHARS_PER_S, think_s=THI
     done = None       # (ai_done event, read_s) awaiting the next prompt
     started = None    # session_start awaiting the first prompt
     away_from = None  # when an away_summary in the current gap says you'd left
+    caps = None       # optional event kinds this session's adapter emits; None = all (Claude Code)
 
     def add(a, b, kind, e):
         if b > a:
@@ -179,7 +198,7 @@ def session_segments(evs, idle_s, reads=None, pace=TYPE_CHARS_PER_S, think_s=THI
 
     def after_done(t, prompt=None):
         """Credit the gap after a reply: reading + thinking (until you left), then writing the prompt."""
-        e, read_s = done
+        e, read_s, _ = done
         a = e["_t"]
         gap = (t - a).total_seconds()
         is_break = gap > max(idle_s, read_s)
@@ -202,11 +221,18 @@ def session_segments(evs, idle_s, reads=None, pace=TYPE_CHARS_PER_S, think_s=THI
                                   credited, away_from is not None,
                                   max(0.0, (present_end - a).total_seconds())))
 
+    def close_last_reply(t):
+        """A tool that never reports session_end: credit the last reply as if a break followed it."""
+        if done is not None and done[2] and caps is not None and "session_end" not in caps:
+            after_done(t)
+
     for e in evs:
         kind, t = e.get("event"), e["_t"]
         if kind == "session_start":
             if pending is not None:
                 close_interrupted(t)
+            close_last_reply(t)
+            caps = e.get("caps") if isinstance(e.get("caps"), list) else None
             pending, done, started, away_from = None, None, e, None
         elif kind == "away":
             if done is not None or started is not None:
@@ -214,7 +240,10 @@ def session_segments(evs, idle_s, reads=None, pace=TYPE_CHARS_PER_S, think_s=THI
         elif kind == "prompt_sent":
             if pending is not None:
                 close_interrupted(t)
-            if done is not None and pending is None:
+            if not yours(e):
+                if done is not None and pending is None and done[2]:
+                    after_done(t)  # you still read the reply before it, but someone else wrote this prompt
+            elif done is not None and pending is None:
                 after_done(t, prompt=e)
             else:
                 # First prompt of a session, or typed while the AI was still working:
@@ -239,16 +268,17 @@ def session_segments(evs, idle_s, reads=None, pace=TYPE_CHARS_PER_S, think_s=THI
             if pending is not None:
                 add(pending["_t"], t, AI, pending)
                 diff = by_prompt.get(pending.get("prompt_id"), 0) if pending.get("prompt_id") else turn_diff
-                done = (e, read_seconds(e, diff))
+                done = (e, read_seconds(e, diff), yours(pending))
             else:
-                done = (e, read_seconds(e, 0))
+                done = (e, read_seconds(e, 0), True)
             pending, started, away_from = None, None, None
         elif kind == "session_end":
             if pending is not None:
                 close_interrupted(t)
-            elif done is not None:
+            elif done is not None and done[2]:
                 after_done(t)
             pending, done, started, away_from = None, None, None, None
+    close_last_reply(datetime.datetime.now(datetime.timezone.utc))
     return segs
 
 

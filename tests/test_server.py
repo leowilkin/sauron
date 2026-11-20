@@ -82,6 +82,8 @@ class TestServer(unittest.TestCase):
         evs = self._log()
         evs[1]["text"] = "my secret prompt"
         evs[1]["cwd"] = "/Users/ada/secret"
+        evs[0]["caps"] = ["ai_edit", "not-an-event"]
+        evs[1]["origin"] = "agent"
         r = self.ingest({"events": evs, "labels": [{"prompt_id": "p1", "pattern": "concept", "text": "secret"}]})
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(r.json()["stored"], 6)
@@ -89,6 +91,8 @@ class TestServer(unittest.TestCase):
         dump = json.dumps(self.app.db.query("SELECT * FROM events")) + json.dumps(self.app.db.query("SELECT * FROM labels"))
         for s in ("secret", "/Users/ada"):
             self.assertNotIn(s, dump)
+        kept = [json.loads(r["data"]) for r in self.app.db.query("SELECT data FROM events ORDER BY n")]
+        self.assertEqual((kept[0]["caps"], kept[1]["origin"]), (["ai_edit"], "agent"))  # what an adapter can see
 
     def test_paths_outside_the_project_are_never_stored(self):
         evs = self._log()

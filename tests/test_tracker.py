@@ -364,6 +364,37 @@ class TestTimeModel(unittest.TestCase):
         row = aitrack.to_json({("2026-11-18", "A"): b})[0]
         self.assertEqual((row["active_s"], row["you_s"], row["ai_only_s"]), (100, 40, 60))
 
+    def test_prompt_from_another_agent_earns_no_writing_and_its_reply_no_reading(self):
+        evs = [self.ev(0, "session_start"), self.ev(10, "prompt_sent"), self.ev(70, "ai_done"),
+               dict(self.ev(100, "prompt_sent"), origin="agent"), self.ev(120, "ai_done"), self.ev(130, "session_end")]
+        # you: 0-10 and 70-100 (you still read the first reply); nothing for the agent's turn. ai: unchanged.
+        self.assertEqual(self.credited(evs), {("2026-11-18", "A"): (40, 80)})
+        evs[3]["origin"] = "you"
+        self.assertEqual(self.credited(evs), {("2026-11-18", "A"): (50, 80)})
+
+    def test_tool_without_session_end_still_credits_the_last_reply(self):
+        def log(caps):
+            start = self.ev(0, "session_start")
+            if caps is not None:
+                start["caps"] = caps
+            return [start, self.ev(10, "prompt_sent"), self.ev(70, "ai_done")]
+        # Amp never reports session_end: the last reply gets the break credit (60 s thinking here).
+        self.assertEqual(self.credited(log(["ai_edit"])), {("2026-11-18", "A"): (70, 60)})
+        # Claude Code (no caps) and tools that do report session_end: an open session earns nothing yet.
+        self.assertEqual(self.credited(log(None)), {("2026-11-18", "A"): (10, 60)})
+        self.assertEqual(self.credited(log(["ai_edit", "session_end"])), {("2026-11-18", "A"): (10, 60)})
+
+    def test_fields_an_adapter_leaves_out_are_unknown_not_zero(self):
+        def row(*evs):
+            return aitrack.to_json(aitrack.summarize(list(evs)))[0]
+        r = row(dict(self.ev(0, "prompt_sent"), chars=40), dict(self.ev(5, "ai_edit"), file="a.py"))
+        self.assertIsNone(r["pasted_chars"])
+        self.assertEqual((r["uncounted_edits"], r["files"]), (1, {}))
+        r = row(dict(self.ev(0, "prompt_sent"), chars=40, pasted_chars=0),
+                dict(self.ev(5, "ai_edit"), file="a.py", lines_added=0, lines_removed=0))
+        self.assertEqual(r["pasted_chars"], 0)
+        self.assertEqual((r["uncounted_edits"], r["files"]), (0, {"a.py": {"added": 0, "removed": 0}}))
+
 
 class TestSummarizeOutput(unittest.TestCase):
     TZ = datetime.timezone(datetime.timedelta(hours=-5))
@@ -1119,3 +1150,4 @@ class TestSyncErrors(unittest.TestCase):
         self.assertIn("behind a login page", str(e.exception))
         with self.assertRaises(OSError):
             sync.read_json(Fake("https://sauron.example/api/ingest", "text/html"), "https://sauron.example/api/ingest")
+

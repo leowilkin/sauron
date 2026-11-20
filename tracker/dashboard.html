@@ -614,7 +614,9 @@ function renderTiles(rows) {
     ["Total time", fmtHM(total), `${days} day${days === 1 ? "" : "s"} with activity`],
     ["You", fmtHM(you), total ? `${Math.round(100 * you / total)}% of total` : "–"],
     ["AI alone", fmtHM(ai), total ? `${Math.round(100 * ai / total)}% of total` : "–"],
-    ["Prompts", sum("prompts").toLocaleString(), `${sum("prompt_chars").toLocaleString()} chars typed`],
+    ["Prompts", sum("prompts").toLocaleString(),
+     `${sum("prompt_chars").toLocaleString()} chars ${rows.some((r) => r.pasted_chars != null) ? "typed" : "typed or pasted"}` +
+     (sum("not_yours") ? ` · ${sum("not_yours")} not yours` : "")],
     ["AI turns", sum("cycles").toLocaleString(), sum("interrupted") ? `${sum("interrupted")} interrupted` : "none interrupted"],
     sum("typed_prompts")
       ? ["Typing", fmtDur(sum("typing_s")), `${sum("typed_prompts")} prompt${sum("typed_prompts") === 1 ? "" : "s"} · ${sum("fixes")} fixes · ${sum("rewrites")} rewrites`]
@@ -815,7 +817,7 @@ function renderTable(rows) {
         <td>${r.typed_prompts ? fmtDur(r.typing_s) : ""}</td><td>${r.typed_prompts ? r.fixes : ""}</td>
         <td>${r.typed_prompts ? r.rewrites : ""}</td><td>${r.drafts_abandoned || ""}</td>
         <td>${fmtDur(r.median_user_response_s)}</td><td>${fmtDur(r.median_read_s)}</td>
-        <td>${r.fast_replies || ""}</td><td>${r.breaks || ""}</td><td>${a || d ? `+${a} / −${d}` : ""}</td></tr>`;
+        <td>${r.fast_replies || ""}</td><td>${r.breaks || ""}</td><td>${a || d ? `+${a} / −${d}` : ""}${r.uncounted_edits ? `${a || d ? " + " : ""}${r.uncounted_edits} uncounted` : ""}</td></tr>`;
     }).join("") + `</tbody></table>`;
 }
 
@@ -994,7 +996,7 @@ function renderJev() {
     thinking: median(g.map((x) => x.own_thinking)),
     understanding: g.filter((x) => x.understanding >= 0.5).length,
     typed: median(g.map((x) => x.typed)),
-    pasted: median(g.map((x) => x.pasted)),
+    pasted: median(g.filter((x) => x.pasted != null).map((x) => x.pasted)),
     aiS: g.reduce((a, x) => a + (x.ai_s || 0), 0),
     aiMed: median(g.filter((x) => x.ai_s != null).map((x) => x.ai_s)),
     reply: median(g.filter((x) => x.gap_s != null && !x.break).map((x) => x.gap_s)),
@@ -1017,7 +1019,7 @@ function renderJev() {
     <th>Reply / read</th><th>AI turn</th><th>AI time total</th></tr></thead><tbody>` +
     stats.map((s) => `<tr><td>${esc(PATTERN_NAMES[s.p] || s.p)}</td><td>${esc(PATTERN_HELP[s.p] || "")}</td><td>${s.n}</td>
       <td>${s.thinking.toFixed(1)}</td><td>${s.understanding} of ${s.n}</td><td>${s.conf.toFixed(2)}</td>
-      <td>${Math.round(s.typed)}</td><td>${Math.round(s.pasted)}</td><td>${fmtDur(s.reply)}</td>
+      <td>${Math.round(s.typed)}</td><td>${s.pasted == null ? "–" : Math.round(s.pasted)}</td><td>${fmtDur(s.reply)}</td>
       <td>${s.replyRead == null ? "–" : s.replyRead.toFixed(1) + "×"}</td><td>${fmtDur(s.aiMed)}</td><td>${fmtHM(s.aiS)}</td></tr>`).join("") +
     `</tbody></table>`;
 }
@@ -1041,7 +1043,7 @@ async function loadPrompts() {
 // reading (scaled by engagement with the reply) + thinking ((complexity + own thinking) x seconds per point)
 // + writing, never more than the time actually available. null for prompts Jev hasn't judged.
 function dynParts(r, perOverride) {
-  if (!r.pattern) return null;
+  if (!r.pattern || r.origin === "agent" || r.origin === "other") return null;
   const per = perOverride != null ? perOverride : Number($("#thinkPer").value);
   const engage = 0.3 + 0.7 * (r.read_previous || 0);
   const read = r.gap_s == null ? 0 : Math.min(r.read_s || 0, jevIdle * 60) * engage;
@@ -1155,7 +1157,7 @@ function renderPrompts() {
       const typing = r.typing_ms != null
         ? `${fmtDur(r.typing_ms / 1000)} · ${r.keys_typed} keys${r.fixes ? ` · ${r.fixes} fixes` : ""}${r.rewrites ? ` · ${r.rewrites} rewrites` : ""}` +
           (r.pace ? `<span class="tsplit">${r.pace.toFixed(1)} chars/s${promptPace && promptPace.n >= 3 && r.keys_typed >= 20 && r.pace < 0.6 * promptPace.cps ? " · slow, careful" : ""}</span>` : "")
-        : `<span class="updated">${r.typed ? `${r.typed} chars` : "–"}</span>`;
+        : `<span class="updated">${r.typed ? `${r.typed} chars` : "–"}${r.origin === "agent" ? " · sent by an agent" : r.origin === "other" ? " · sent by someone else" : ""}</span>`;
       const when = `${r.at.slice(5, 10)} ${r.at.slice(11, 16)}`;
       const youTip = (d
         ? `Reading ${fmtDur(d.read)} (${Math.round(d.engage * 100)}% of ~${fmtDur(r.read_s || 0)}, by engagement with the reply)\n` +

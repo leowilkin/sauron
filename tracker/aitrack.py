@@ -65,6 +65,9 @@ def _bucket():
         "prompts": 0,
         "chars": 0,
         "pasted_chars": 0,
+        "pasted_known": 0,    # prompts whose adapter can tell pasted from typed text
+        "not_yours": 0,       # prompts another agent or person sent (origin), which earn no "you" time
+        "uncounted_edits": 0,  # AI edits whose adapter couldn't count lines
         "cycle_secs": [],
         "interrupted": 0,
         "user_secs": [],
@@ -105,7 +108,10 @@ def summarize(events, idle_min=15.0):
             if kind == "prompt_sent":
                 b["prompts"] += 1
                 b["chars"] += int(e.get("chars") or 0)
-                b["pasted_chars"] += int(e.get("pasted_chars") or 0)
+                if "pasted_chars" in e:  # absent = this tool can't tell pasted from typed, not zero
+                    b["pasted_known"] += 1
+                    b["pasted_chars"] += int(e.get("pasted_chars") or 0)
+                b["not_yours"] += not timemodel.yours(e)
                 if "typing_ms" in e:  # absent = this tool can't see keystrokes, not zero
                     b["typed_prompts"] += 1
                     for k in ("typing_ms", "keys_typed", "fixes", "rewrites", "revisions"):
@@ -128,6 +134,9 @@ def summarize(events, idle_min=15.0):
                 pending = None
 
             elif kind == "ai_edit":
+                if "lines_added" not in e:  # this tool's edit couldn't be counted: unknown, not 0 lines
+                    b["uncounted_edits"] += 1
+                    continue
                 f = b["files"][e.get("file") or "?"]
                 f[0] += int(e.get("lines_added") or 0)
                 f[1] += int(e.get("lines_removed") or 0)
@@ -191,7 +200,9 @@ def to_json(out, replies=False):
             "ai_only_s": round(b["ai_s"]),
             "prompts": b["prompts"],
             "prompt_chars": b["chars"],
-            "pasted_chars": b["pasted_chars"],
+            "pasted_chars": b["pasted_chars"] if b["pasted_known"] else None,
+            "not_yours": b["not_yours"],
+            "uncounted_edits": b["uncounted_edits"],
             "cycles": len(b["cycle_secs"]),
             "interrupted": b["interrupted"],
             "median_ai_response_s": _median(b["cycle_secs"]),
@@ -226,8 +237,8 @@ def print_text(out, idle_min, top):
         tot[2] += 1
         print("  time      %8s   (you %s, AI alone %s)"
               % (fmt_hm(b["you_s"] + b["ai_s"]), fmt_hm(b["you_s"]), fmt_hm(b["ai_s"])))
-        paste = ", %s pasted" % format(b["pasted_chars"], ",") if b["pasted_chars"] else ""
-        print("  prompts        %4d   (%s chars typed%s)" % (b["prompts"], format(b["chars"], ","), paste))
+        print("  prompts        %4d   (%s)" % (b["prompts"], _prompt_note(b["chars"], b["pasted_chars"], b["pasted_known"],
+                                                                     b["not_yours"])))
         intr = "   (%d interrupted)" % b["interrupted"] if b["interrupted"] else ""
         print("  AI cycles      %4d   median AI response   %s%s"
               % (len(b["cycle_secs"]), fmt_dur(_median(b["cycle_secs"])), intr))
@@ -250,12 +261,15 @@ def print_text(out, idle_min, top):
         if files:
             ta = sum(v[0] for _, v in files)
             tr = sum(v[1] for _, v in files)
-            print("  AI lines       +%d / -%d across %d file%s" % (ta, tr, len(files), "" if len(files) == 1 else "s"))
+            print("  AI lines       +%d / -%d across %d file%s%s" % (ta, tr, len(files), "" if len(files) == 1 else "s",
+                                                               _uncounted(b["uncounted_edits"])))
             width = min(48, max(len(k) for k, _ in files[:top]))
             for name, (a, r) in files[:top]:
                 print("    %-*s  +%-5d -%d" % (width, name, a, r))
             if len(files) > top:
                 print("    ... %d more (use --top)" % (len(files) - top))
+        elif b["uncounted_edits"]:
+            print("  AI lines          ?   (%s)" % _uncounted(b["uncounted_edits"]).strip(" ,"))
         print()
     for day, (you, ai, n) in sorted(day_totals.items()):
         if n > 1:
@@ -263,6 +277,20 @@ def print_text(out, idle_min, top):
                   % (day, fmt_hm(you + ai), n, fmt_hm(you), fmt_hm(ai)))
     if len(day_totals) > 1:
         print_overall(out, sorted(day_totals))
+
+
+def _prompt_note(chars, pasted, pasted_known, not_yours):
+    if pasted_known:
+        note = "%s chars typed%s" % (format(chars, ","), ", %s pasted" % format(pasted, ",") if pasted else "")
+    else:
+        note = "%s chars, typed or pasted" % format(chars, ",")  # this tool can't tell them apart
+    if not_yours:
+        note += ", %d sent by an agent or someone else" % not_yours
+    return note
+
+
+def _uncounted(n):
+    return ", %s not counted" % _plural(n, "edit") if n else ""
 
 
 def _plural(n, word):
@@ -288,14 +316,15 @@ def print_overall(out, days):
             removed += r
     chars = sum(b["chars"] for b in bs)
     pasted = sum(b["pasted_chars"] for b in bs)
+    uncounted = sum(b["uncounted_edits"] for b in bs)
 
     print()
     print("All days  %s -> %s   (%s with activity)" % (days[0], days[-1], _plural(len(days), "day")))
     print("  time      %8s   (you %s, AI alone %s%s)"
           % (fmt_hm(you + ai), fmt_hm(you), fmt_hm(ai),
              ", %d%% AI alone" % round(100 * ai / (you + ai)) if you + ai else ""))
-    paste = ", %s pasted" % format(pasted, ",") if pasted else ""
-    print("  prompts        %4d   (%s chars typed%s)" % (sum(b["prompts"] for b in bs), format(chars, ","), paste))
+    print("  prompts        %4d   (%s)" % (sum(b["prompts"] for b in bs), _prompt_note(
+        chars, pasted, sum(b["pasted_known"] for b in bs), sum(b["not_yours"] for b in bs))))
     if cycles:
         intr = ", %d interrupted" % interrupted if interrupted else ""
         print("  AI turns       %4d   median %s, longest %s%s"
@@ -315,8 +344,8 @@ def print_overall(out, days):
                  sum(b["fixes"] for b in bs), sum(b["rewrites"] for b in bs),
                  sum(b["revisions"] for b in bs), sum(b["drafts_abandoned"] for b in bs)))
     if files:
-        print("  AI lines       +%s / -%s across %s"
-              % (format(added, ","), format(removed, ","), _plural(len(files), "file")))
+        print("  AI lines       +%s / -%s across %s%s"
+              % (format(added, ","), format(removed, ","), _plural(len(files), "file"), _uncounted(uncounted)))
 
 
 def print_replies(out):
@@ -600,7 +629,7 @@ def prompt_rows_from(events, labels, idle_min=15.0):
                 last_done, started, away_seen = None, e, False
             elif kind == "prompt_sent":
                 cur = {"day": e["ts"][:10], "at": e["ts"], "project": e.get("project"), "session": e.get("session"),
-                       "typed": e.get("chars", 0), "pasted": e.get("pasted_chars", 0),
+                       "typed": e.get("chars", 0), "pasted": e.get("pasted_chars"), "origin": e.get("origin"),
                        "gap_s": None, "read_s": None, "break": None, "you_before_s": 0, "away": False,
                        "present_s": None, "compose_s": round(timemodel.compose_seconds(e, pace), 1),
                        "ai_s": None, "lines": 0, "reply_chars": None, "replay": bool(e.get("replay_hash")),
@@ -618,7 +647,7 @@ def prompt_rows_from(events, labels, idle_min=15.0):
                         cur["read_s"], cur["break"] = round(rd.read_s), rd.is_break
                         cur["you_before_s"], cur["away"] = round(rd.credited_s), rd.away
                         cur["present_s"] = round(rd.present_s)
-                else:
+                elif timemodel.yours(e):
                     c = timemodel.compose_seconds(e, pace)
                     if started is not None and not away_seen:
                         gap = (e["_t"] - started["_t"]).total_seconds()
@@ -631,7 +660,7 @@ def prompt_rows_from(events, labels, idle_min=15.0):
                         cur[k] = lab.get(k)
                 rows.append(cur)
                 last_done, started, away_seen = None, None, False
-            elif kind == "ai_edit" and cur is not None:
+            elif kind == "ai_edit" and cur is not None and "lines_added" in e:
                 cur["lines"] += int(e.get("lines_added") or 0) + int(e.get("lines_removed") or 0)
             elif kind == "ai_done":
                 if cur is not None and cur["ai_s"] is None:
@@ -1039,11 +1068,11 @@ def cmd_presence(args):
 
 # What a published snapshot may contain. Anything not listed here is dropped.
 PUBLIC_DATA_ROW = {"day", "project", "sessions", "active_s", "you_s", "ai_only_s", "prompts", "prompt_chars",
-                   "pasted_chars", "cycles", "interrupted", "median_ai_response_s", "median_user_response_s",
+                   "pasted_chars", "not_yours", "uncounted_edits", "cycles", "interrupted", "median_ai_response_s", "median_user_response_s",
                    "median_read_s", "fast_replies", "breaks", "typed_prompts", "typing_s", "keys_typed", "fixes",
                    "rewrites", "revisions", "drafts_abandoned", "replies", "files"}
 PUBLIC_REPLY = {"at", "gap_s", "read_s", "fast", "break"}
-PUBLIC_PROMPT_ROW = {"day", "at", "project", "session", "typed", "pasted", "gap_s", "read_s", "break", "you_before_s",
+PUBLIC_PROMPT_ROW = {"day", "at", "project", "session", "typed", "pasted", "origin", "gap_s", "read_s", "break", "you_before_s",
                      "away", "present_s", "compose_s", "ai_s", "lines", "reply_chars", "typing_ms", "keys_typed",
                      "fixes", "rewrites", "revisions", "pauses", "pace", "pattern", "pattern_confidence",
                      "pattern_probs", "understanding", "read_previous", "pasted_output", "own_thinking",

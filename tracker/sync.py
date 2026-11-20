@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import eventlog  # noqa: E402
 
 SEND_FIELDS = {
-    "event", "ts", "session", "project", "prompt_id", "source", "agent_id", "reason", "agent_type",
+    "event", "ts", "session", "project", "prompt_id", "source", "agent_id", "reason", "agent_type", "origin", "caps",
     "chars", "pasted_chars", "typing_ms", "compose_ms", "keys_typed", "pastes", "fixes", "rewrites", "revisions",
     "pauses", "chars_deleted", "drafts_abandoned", "abandoned_typing_ms",
     "tool", "file", "lines_added", "lines_removed", "response_text_chars", "response_code_lines",

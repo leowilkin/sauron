@@ -14,7 +14,7 @@ FLOOR = 1.0        # learning kinds earn at least this share
 
 def you_seconds(r, per=THINK_PER, idle_min=15.0):
     """Your time before a prompt: reading x engagement + thinking + writing (see dynParts)."""
-    if not r.get("pattern"):
+    if not r.get("pattern") or r.get("origin") in ("agent", "other"):
         return float(r.get("you_before_s") or 0)
     engage = 0.3 + 0.7 * (r.get("read_previous") or 0)
     read = 0.0 if r.get("gap_s") is None else min(r.get("read_s") or 0, idle_min * 60) * engage

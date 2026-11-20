@@ -241,12 +241,22 @@ One JSON object per line in `~/.ai-tracker/events.jsonl`:
 | `source` | Which adapter wrote it (`claude-code`). Future adapters: `cursor`, `codex`, … |
 | `session` | The tool's session id. |
 | `event` | `session_start` (`reason`), `session_end` (`reason`, optional abandoned-draft fields), `prompt_sent` (`chars`, `pasted_chars`, optional [typing fields](#typing-claude-code-terminal)), `ai_edit` (`tool`, `file`, `lines_added`, `lines_removed`), `ai_done` (`response_text_chars`, `response_code_lines`), `subagent_done` (`agent_type`). |
+| `caps` | On `session_start`: the optional event kinds this adapter can emit (`session_end`, `ai_edit`, `subagent_done`, `away`). Left out means all of them (Claude Code). |
+| `origin` | On `prompt_sent`: `agent` when another agent or a plugin sent it, `other` when another person did, `you` when it's known to be you. Left out when the tool can't tell; the prompt then counts as yours. |
 | `project` | Name of the git repo root containing `cwd`. A linked worktree is named after its main repo. Outside a repo, the folder name is used. Found by walking up for `.git`, without starting `git`. |
 | `file` | Relative to the project root, with forward slashes. |
 | `prompt_id`, `agent_id` | Opaque ids from Claude Code, when present. |
 | `prev_hash` | SHA-256 of the previous line's bytes. The first line uses 64 zeros. |
 
 **Writing an adapter for another tool:** build a dict with `event`, `session` and the event's fields, then call `tracker/eventlog.py: append_event(ev, cwd=..., source="your-tool")`. It fills in the common fields and handles locking and the hash chain.
+
+Adapters send only what their tool can see:
+
+- **Leave out a field you can't measure. Never send 0 for it.** A missing field is unknown: `summarize` reports no pasted count instead of 0, and an `ai_edit` without line counts shows up as "not counted". The time model falls back to estimates, such as typing pace from prompt length.
+- **List the optional event kinds you emit in `caps` on `session_start`.** Without `session_end` in it, the last reply of a session is credited as if a break followed it, instead of never.
+- **Send `origin` when the tool knows who sent a prompt.** Prompts from an agent or another person earn no writing time, and the replies to them no reading time.
+
+To sync a new field to the server, add it to `SEND_FIELDS` in `tracker/sync.py` and `EVENT_FIELDS` in `server/app.py`. Both drop anything not listed.
 
 ## How it works
 

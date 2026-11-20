@@ -46,7 +46,7 @@ ORIGIN = os.environ.get("PUBLIC_ORIGIN", "http://127.0.0.1:8000").rstrip("/")
 REPO_URL = "https://github.com/2Mon/sauron"
 
 EVENT_FIELDS = {
-    "session", "project", "prompt_id", "source", "agent_id", "reason", "agent_type",
+    "session", "project", "prompt_id", "source", "agent_id", "reason", "agent_type", "origin", "caps",
     "chars", "pasted_chars", "typing_ms", "compose_ms", "keys_typed", "pastes", "fixes", "rewrites", "revisions",
     "pauses", "chars_deleted", "drafts_abandoned", "abandoned_typing_ms",
     "tool", "file", "lines_added", "lines_removed", "response_text_chars", "response_code_lines",
@@ -338,6 +338,8 @@ def clean_event(e):
             data[k] = v
         elif isinstance(v, str):
             data[k] = v[:200]
+        elif k == "caps" and isinstance(v, list):
+            data[k] = [c for c in v if c in EVENT_KINDS]  # what the adapter can see, event kinds only
     if "file" in data and not sync.inside_project(data["file"]):
         data["file"] = sync.OUTSIDE  # never store paths outside the project: they can name the user's folders
     return {"n": n, "h": h, "prev": prev, "ts": ts, "kind": e["event"], "project": data.get("project"), "data": data}
