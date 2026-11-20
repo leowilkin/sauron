@@ -165,7 +165,8 @@ def ask_jev(key, state, retries=4):
         req = urllib.request.Request(ENDPOINT, data=body, headers={
             "Authorization": "Bearer " + key, "Content-Type": "application/json"})
         try:
-            with urllib.request.urlopen(req, timeout=90) as r:
+            import sync  # its urlopen never follows redirects, which would carry the key along
+            with sync.urlopen(req, timeout=90) as r:
                 return json.load(r)
         except urllib.error.HTTPError as e:
             if e.code in (429, 529) and attempt < retries - 1:
@@ -223,7 +224,7 @@ def _config():
 def _set_config(**kw):
     d = _config()
     d.update(kw)
-    os.makedirs(eventlog.data_dir(), exist_ok=True)
+    eventlog.make_data_dir()
     path = os.path.join(eventlog.data_dir(), "config.json")
     with open(path + ".tmp", "w", encoding="utf-8") as f:
         json.dump(d, f, indent=2)
@@ -296,7 +297,7 @@ def server_labeller():
         body = json.dumps({"prompt_id": meta.get("prompt_id"), "at": meta.get("at"), "state": state}).encode("utf-8")
         req = urllib.request.Request(url, data=body, headers={
             "Authorization": "Bearer " + key, "Content-Type": "application/json", "User-Agent": "sauron-label/1"})
-        with urllib.request.urlopen(req, timeout=120) as r:
+        with sync.urlopen(req, timeout=120) as r:
             return sync.read_json(r, url)
     return label
 
@@ -399,7 +400,7 @@ def main(argv=None):
         if not k:
             print("Nothing saved.")
             return 1
-        os.makedirs(eventlog.data_dir(), exist_ok=True)
+        eventlog.make_data_dir()
         path = os.path.join(eventlog.data_dir(), "jev.key")
         # Write a fresh 0600 file and swap it in, so an old key file's looser permissions don't carry over.
         tmp = path + ".tmp"

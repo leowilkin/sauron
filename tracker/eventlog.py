@@ -29,6 +29,20 @@ def data_dir():
     return os.path.join(os.path.expanduser("~"), ".ai-tracker")
 
 
+def make_data_dir():
+    """Create the data folder readable only by this user (0700), and tighten one an older version made 0755.
+    Its logs name projects, files and folders, which other accounts on a shared machine shouldn't see.
+    Everything inside is covered too: without access to the folder, nothing in it can be opened."""
+    d = data_dir()
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    try:
+        if os.stat(d).st_mode & 0o077:
+            os.chmod(d, 0o700)
+    except OSError:
+        pass
+    return d
+
+
 def log_path():
     return os.path.join(data_dir(), "events.jsonl")
 
@@ -210,8 +224,7 @@ def append_event(event, cwd=None, source="unknown"):
     record.update(event)
     record["cwd"] = cwd
 
-    d = data_dir()
-    os.makedirs(d, exist_ok=True)
+    make_data_dir()
     path = log_path()
 
     with _FileLock(path + ".lock"):

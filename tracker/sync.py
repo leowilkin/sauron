@@ -171,10 +171,31 @@ def read_new_labels(path, offset):
     return out, offset
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **kw):
+        return None  # urllib then raises HTTPError for the 3xx instead of following it
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def urlopen(req, timeout):
+    """urlopen that never follows redirects. urllib's own keeps the Authorization header on a redirect, even to
+    another host or from https to http, so following one would hand the key to whoever the redirect names."""
+    try:
+        return _OPENER.open(req, timeout=timeout)
+    except urllib.error.HTTPError as e:
+        if 300 <= e.code < 400:
+            where = urllib.parse.urlsplit(e.headers.get("Location") or "").netloc or "another address"
+            raise OSError("the server address redirects to %s, probably a login page; ask its admin to let "
+                          "/api/ingest and /api/label through without it" % where)
+        raise
+
+
 def post(url, key, body):
     req = urllib.request.Request(url.rstrip("/") + "/api/ingest", data=json.dumps(body).encode("utf-8"), headers={
         "Authorization": "Bearer " + key, "Content-Type": "application/json", "User-Agent": "ai-tracker-sync/1"})
-    with urllib.request.urlopen(req, timeout=30) as r:
+    with urlopen(req, timeout=30) as r:
         return read_json(r, url)
 
 

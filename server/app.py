@@ -5,18 +5,20 @@ Environment:
   PUBLIC_ORIGIN        e.g. https://sauron.k.hackclub.dev (OAuth redirect is <origin>/auth/callback)
   HCA_CLIENT_ID/SECRET from auth.hackclub.com/developer/apps
   SESSION_SECRET       optional; generated and kept in the database when unset
-  ADMINS               comma-separated usernames, Hack Club Auth ids or Slack ids who are always admins
+  ADMINS               comma-separated Hack Club Auth ids or Slack ids who are always admins (not usernames:
+                       anyone can pick a username that isn't taken)
   JEV_API_KEY          the one Hack Club AI key used to label everyone's prompts (POST /api/label)
   LABEL_DAILY_LIMIT    most prompts labelled per user per day with that key (default 1500)
   DATABASE_URL         postgres://... (SQLite file when unset, for local runs)
 
 Privacy: the server accepts only counts-only, Hackatime-level fields (see EVENT_FIELDS and
-LABEL_FIELDS) and drops everything else, even if a client sends it. Prompt text never arrives.
+clean_label) and drops everything else, even if a client sends it. Prompt text never arrives.
 """
 import datetime
 import hashlib
 import html
 import json
+import math
 import os
 import re
 import secrets
@@ -52,8 +54,8 @@ EVENT_FIELDS = {
     "tool", "file", "lines_added", "lines_removed", "response_text_chars", "response_code_lines",
 }
 EVENT_KINDS = {"session_start", "session_end", "prompt_sent", "ai_edit", "ai_done", "subagent_done", "away"}
-LABEL_FIELDS = {"pattern", "pattern_confidence", "pattern_probs", "understanding", "read_previous", "pasted_output",
-                "own_thinking", "own_thinking_confidence", "complexity", "model", "at"}
+PATTERNS = set(jev_judge.QUESTIONS["pattern"]["criteria"])
+MAX_SCORE = max(len(q.get("criteria") or ()) for q in jev_judge.QUESTIONS.values() if q["type"] == "score")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 MAX_BATCH = 2000
 
@@ -117,9 +119,10 @@ def current_user(request):
 
 
 def env_admin(u):
-    """Admins named in the ADMINS setting. They can't be removed from the site, only from the server settings."""
+    """Admins named in the ADMINS setting. They can't be removed from the site, only from the server settings.
+    Matched on ids Hack Club Auth sets, never on usernames, which users choose themselves."""
     names = {x.strip().lower() for x in os.environ.get("ADMINS", "").split(",") if x.strip()}
-    return bool(u) and bool(names & ({str(u.get(k) or "").lower() for k in ("username", "hca_id", "slack_id")} - {""}))
+    return bool(u) and bool(names & ({str(u.get(k) or "").lower() for k in ("hca_id", "slack_id")} - {""}))
 
 
 def is_admin(u):
@@ -343,6 +346,40 @@ def clean_event(e):
     return {"n": n, "h": h, "prev": prev, "ts": ts, "kind": e["event"], "project": data.get("project"), "data": data}
 
 
+def _num(v, lo, hi):
+    if isinstance(v, bool):
+        v = int(v)
+    if isinstance(v, (int, float)) and math.isfinite(v):
+        return min(max(v, lo), hi)
+    return None
+
+
+def clean_label(lab):
+    """Keep only well-typed label fields, within the ranges Jev answers in. A malformed label from a device
+    must not break the stats it feeds (and with them the leaderboard everyone loads)."""
+    if not isinstance(lab, dict):
+        return {}
+    out = {}
+    if lab.get("pattern") in PATTERNS:
+        out["pattern"] = lab["pattern"]
+    probs = lab.get("pattern_probs")
+    if isinstance(probs, dict):
+        probs = {k: _num(v, 0, 1) for k, v in probs.items() if k in PATTERNS}
+        probs = {k: v for k, v in probs.items() if v is not None}
+        if probs:
+            out["pattern_probs"] = probs
+    for f in ("pattern_confidence", "own_thinking_confidence", "understanding", "read_previous", "pasted_output"):
+        if _num(lab.get(f), 0, 1) is not None:
+            out[f] = _num(lab[f], 0, 1)
+    for f in ("own_thinking", "complexity"):
+        if _num(lab.get(f), 0, MAX_SCORE) is not None:
+            out[f] = _num(lab[f], 0, MAX_SCORE)
+    for f, lim in (("model", 100), ("at", 40)):
+        if isinstance(lab.get(f), str):
+            out[f] = lab[f][:lim]
+    return out
+
+
 @app.post("/api/ingest")
 async def ingest(request: Request):
     k = device(request)
@@ -375,7 +412,7 @@ async def ingest(request: Request):
         for lab in (body.get("labels") or [])[:MAX_BATCH]:
             if not isinstance(lab, dict) or not isinstance(lab.get("prompt_id"), str):
                 continue
-            data = {f: lab[f] for f in LABEL_FIELDS if f in lab}
+            data = clean_label(lab)
             db.execute("INSERT INTO labels (user_id, prompt_id, data) VALUES (%s, %s, %s) "
                        "ON CONFLICT (user_id, prompt_id) DO UPDATE SET data = excluded.data",
                        (k["user_id"], lab["prompt_id"][:100], dumps(data)))
@@ -426,7 +463,7 @@ async def label(request: Request):
     lab = dict(jev_judge.flatten(res.get("answers")), model=res.get("model"))
     if isinstance(body.get("at"), str):
         lab["at"] = body["at"][:40]
-    data = {f: lab[f] for f in LABEL_FIELDS if f in lab}
+    data = clean_label(lab)
     db.execute("INSERT INTO labels (user_id, prompt_id, data) VALUES (%s, %s, %s) "
                "ON CONFLICT (user_id, prompt_id) DO UPDATE SET data = excluded.data", (k["user_id"], pid, dumps(data)))
     _cache.pop(k["user_id"], None)
@@ -453,7 +490,7 @@ def user_stats(u):
         e = json.loads(r["data"])
         e.update(ts=r["ts"], event=r["kind"], _t=aitrack.parse_ts(r["ts"]), _line=r["n"])
         evs.append(e)
-    labels = {r["prompt_id"]: json.loads(r["data"])
+    labels = {r["prompt_id"]: clean_label(json.loads(r["data"]))  # also covers labels stored before checks existed
               for r in db.query("SELECT prompt_id, data FROM labels WHERE user_id = %s", (u["id"],))}
     rows = aitrack.prompt_rows_from(evs, labels) if evs else []
     per = effort.totals(rows)

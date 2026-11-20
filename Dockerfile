@@ -9,4 +9,6 @@ COPY server server
 RUN useradd --uid 10001 app && chown -R app /app
 USER app
 EXPOSE 8000
-CMD ["uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+# No --proxy-headers: the app never reads the client address or scheme (links use PUBLIC_ORIGIN), so there is
+# no reason to trust X-Forwarded-* headers that anyone reaching the container directly could set.
+CMD ["uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]

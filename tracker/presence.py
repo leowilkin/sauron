@@ -260,7 +260,7 @@ def _write(line, now):
 def run():
     if running_pid():
         return
-    os.makedirs(eventlog.data_dir(), exist_ok=True)
+    eventlog.make_data_dir()
     with open(_pidfile(), "w", encoding="utf-8") as f:
         f.write(str(os.getpid()))
     last_state, last_write = None, 0.0

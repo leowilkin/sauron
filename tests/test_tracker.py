@@ -1119,3 +1119,107 @@ class TestSyncErrors(unittest.TestCase):
         self.assertIn("behind a login page", str(e.exception))
         with self.assertRaises(OSError):
             sync.read_json(Fake("https://sauron.example/api/ingest", "text/html"), "https://sauron.example/api/ingest")
+
+    def test_redirects_are_not_followed_so_the_key_stays_put(self):
+        import http.server
+        import threading
+        import sync
+        seen = []
+
+        class Elsewhere(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                seen.append(self.headers.get("Authorization"))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b"{}")
+
+            def log_message(self, *a):
+                pass
+        other = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Elsewhere)
+
+        class Redirector(Elsewhere):
+            def do_POST(self):
+                self.send_response(307)  # 307 keeps the method and body, the worst case
+                self.send_header("Location", "http://127.0.0.1:%d/login" % other.server_address[1])
+                self.end_headers()
+        here = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Redirector)
+        for s in (other, here):
+            threading.Thread(target=s.serve_forever, daemon=True).start()
+        try:
+            with self.assertRaises(OSError) as e:
+                sync.post("http://127.0.0.1:%d" % here.server_address[1], "ait_secret", {"events": []})
+            self.assertIn("redirects to 127.0.0.1:%d" % other.server_address[1], str(e.exception))
+            self.assertEqual(seen, [])
+        finally:
+            for s in (other, here):
+                s.shutdown()
+                s.server_close()
+
+
+class TestConnectAddress(Base):
+    def test_plain_http_only_for_this_computer(self):
+        import argparse
+        import getpass
+        orig = getpass.getpass
+        asked = []
+        getpass.getpass = lambda prompt: asked.append(prompt) or ""  # empty key: stops right after the check
+        try:
+            for url in ("http://localhost.evil.example", "http://127.0.0.1.evil.example", "http://localhost@evil.example",
+                        "http://evil.example", "ftp://localhost", "https://"):
+                self.assertEqual(aitrack.cmd_connect(argparse.Namespace(server=url)), 2, url)
+            self.assertEqual(asked, [])
+            for url in ("https://sauron.example", "http://localhost:8000", "http://127.0.0.1:8000"):
+                self.assertEqual(aitrack.cmd_connect(argparse.Namespace(server=url)), 1, url)
+            self.assertEqual(len(asked), 3)
+        finally:
+            getpass.getpass = orig
+
+
+class TestServeHostCheck(Base):
+    def test_only_local_host_names_are_answered(self):
+        import argparse
+        import http.client
+        import http.server
+        import threading
+        made = []
+        orig = http.server.ThreadingHTTPServer
+
+        class Capture(orig):
+            def __init__(self, *a, **kw):
+                orig.__init__(self, *a, **kw)
+                made.append(self)
+        http.server.ThreadingHTTPServer = Capture
+        try:
+            args = argparse.Namespace(paths=[], file=[], prompt_text=None, idle=15.0, port=0, no_open=True)
+            threading.Thread(target=aitrack.cmd_serve, args=(args,), daemon=True).start()
+            for _ in range(100):
+                if made:
+                    break
+                time.sleep(0.02)
+        finally:
+            http.server.ThreadingHTTPServer = orig
+        srv = made[0]
+        port = srv.server_address[1]
+
+        def status(method, host, path="/api/sources"):
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            c.putrequest(method, path, skip_host=True)
+            c.putheader("Host", host)
+            if method == "POST":
+                c.putheader("X-Aitrack", "1")
+                c.putheader("Content-Length", "2")
+            c.endheaders(b"{}" if method == "POST" else None)
+            r = c.getresponse()
+            r.read()
+            c.close()
+            return r.status
+        try:
+            self.assertEqual(status("GET", "127.0.0.1:%d" % port), 200)
+            self.assertEqual(status("GET", "localhost:%d" % port), 200)
+            self.assertEqual(status("GET", "rebind.evil.example:%d" % port), 403)
+            self.assertEqual(status("GET", "rebind.evil.example:%d" % port, "/"), 403)
+            self.assertEqual(status("POST", "rebind.evil.example:%d" % port, "/api/label"), 403)
+        finally:
+            srv.shutdown()
+            srv.server_close()

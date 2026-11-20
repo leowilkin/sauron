@@ -233,7 +233,7 @@ class TestServer(unittest.TestCase):
         self._second_user(public=0)
         self._as("ada")
         self.assertEqual(self.c.get("/api/u/bo").status_code, 404)  # private, not admin yet
-        os.environ["ADMINS"] = "ada"
+        os.environ["ADMINS"] = "ident!x"  # Ada's Hack Club Auth id
         try:
             self.assertEqual(self.c.get("/admin").status_code, 200)
             self.assertEqual(self.c.get("/api/u/bo").status_code, 200)
@@ -243,6 +243,31 @@ class TestServer(unittest.TestCase):
             self.assertEqual([r["action"] for r in log], ["view"])
         finally:
             os.environ.pop("ADMINS", None)
+
+    def test_admins_setting_never_matches_a_username(self):
+        # usernames are self-chosen: taking the one ADMINS names must not make you an admin
+        self._as("ada")
+        os.environ["ADMINS"] = "ada"
+        try:
+            self.assertEqual(self.c.get("/admin").status_code, 404)
+        finally:
+            os.environ.pop("ADMINS", None)
+
+    def test_malformed_labels_are_cleaned_and_cant_break_the_leaderboard(self):
+        evs = self._log()
+        bad = [{"prompt_id": "p1", "pattern": "concept", "pattern_probs": "x", "own_thinking": "lots",
+                "complexity": 1e9, "read_previous": {"a": 1}, "model": "m" * 5000, "junk": "y"},
+               {"prompt_id": "p2", "pattern": "<script>", "pattern_probs": {"concept": 2, "evil": 1, "direct": "z"}}]
+        self.assertEqual(self.ingest({"events": evs, "labels": bad}).status_code, 200)
+        self.assertEqual(self.c.get("/").status_code, 200)
+        self.assertEqual(self.c.get("/api/u/ada").status_code, 200)
+        got = {r["prompt_id"]: json.loads(r["data"]) for r in self.app.db.query("SELECT prompt_id, data FROM labels")}
+        self.assertEqual(got["p1"], {"pattern": "concept", "complexity": self.app.MAX_SCORE, "model": "m" * 100})
+        self.assertEqual(got["p2"], {"pattern_probs": {"concept": 1}})
+        # a bad label stored before these checks existed doesn't break stats either
+        self.app.db.execute("UPDATE labels SET data = %s WHERE prompt_id = %s", ('{"pattern_probs": "x", "pattern": "concept"}', "p1"))
+        self.app._cache.clear()
+        self.assertEqual(self.c.get("/").status_code, 200)
 
     def test_grant_and_revoke_admin(self):
         self._second_user()

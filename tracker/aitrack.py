@@ -463,7 +463,7 @@ def cmd_verify(args):
         print("save the head line somewhere you control and pass it back with --expect-head.")
         heads[key] = {"head": "%d:%s" % (n, h), "at": eventlog.now_iso()}
         try:
-            os.makedirs(eventlog.data_dir(), exist_ok=True)
+            eventlog.make_data_dir()
             with open(_heads_path(), "w", encoding="utf-8") as f:
                 json.dump(heads, f)
         except OSError:
@@ -732,7 +732,7 @@ def record_label(pid, label):
         raise ValueError("bad prompt id")
     if label is not None and label not in LABEL_VALUES:
         raise ValueError("bad label")
-    os.makedirs(eventlog.data_dir(), exist_ok=True)
+    eventlog.make_data_dir()
     with open(labels_path(), "a", encoding="utf-8") as f:
         f.write(json.dumps({"pid": pid, "label": label, "at": eventlog.now_iso()}) + "\n")
 
@@ -958,15 +958,22 @@ def cmd_connect(args):
     """Connect this computer to an ai-tracker server with a device key from its settings page."""
     import getpass
     import sync
+    import urllib.parse
     url = args.server.rstrip("/")
-    if not url.startswith(("https://", "http://127.0.0.1", "http://localhost")):
+    try:
+        parts = urllib.parse.urlsplit(url)
+        local = parts.scheme == "http" and parts.hostname in ("localhost", "127.0.0.1", "::1")
+    except ValueError:
+        parts, local = None, False
+    # plain http only for this computer itself: http://localhost.example.com is someone else's server
+    if not (parts and parts.hostname and (parts.scheme == "https" or local)):
         print("The server address should start with https://")
         return 2
     k = getpass.getpass("Device key from %s/settings (input hidden): " % url).strip()
     if not k:
         print("Nothing saved.")
         return 1
-    os.makedirs(eventlog.data_dir(), exist_ok=True)
+    eventlog.make_data_dir()
     path = os.path.join(eventlog.data_dir(), "server.key")
     tmp = path + ".tmp"
     if os.path.exists(tmp):
@@ -982,12 +989,14 @@ def cmd_connect(args):
         # effort labels come through the server from now on; older prompts aren't sent
         import time
         jev_judge._set_config(jev_since=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
-    print("Connected. Sending your log (counts and labels only)...")
+    print("Connected. Sending your log (counts and timings, never prompt text)...")
     n = sync.sync()
     if n < 0:
         print("Couldn't reach the server yet; it will retry after your next turn. Details in errors.log.")
         return 1
     print("Sent %d events. From now on new activity is sent after each turn." % n)
+    print("For effort labels, each new prompt's text (secrets removed, best-effort) also goes to the server, "
+          "which has Jev label it and keeps only the label, not the text.")
     return 0
 
 
@@ -1217,7 +1226,19 @@ def cmd_serve(args):
         def _json(self, obj, code=200):
             self._send(code, json.dumps(obj).encode("utf-8"), "application/json")
 
+        def _foreign_host(self):
+            """True (and answered with 403) unless the request names this server by its local address.
+            A web page can point its own domain at 127.0.0.1 (DNS rebinding) and would then be allowed to
+            read this dashboard; its requests still carry its own domain in Host."""
+            port = self.server.server_address[1]
+            if self.headers.get("Host") in ("127.0.0.1:%d" % port, "localhost:%d" % port):
+                return False
+            self._send(403, b"forbidden", "text/plain")
+            return True
+
         def do_GET(self):
+            if self._foreign_host():
+                return
             u = urllib.parse.urlparse(self.path)
             if u.path == "/":
                 with open(page, "rb") as f:  # re-read so edits show on refresh
@@ -1244,6 +1265,8 @@ def cmd_serve(args):
                 self._send(404, b"not found", "text/plain")
 
         def do_POST(self):
+            if self._foreign_host():
+                return
             u = urllib.parse.urlparse(self.path)
             # A custom header that browsers won't send cross-site without a preflight we never allow.
             if u.path != "/api/label" or self.headers.get("X-Aitrack") != "1":

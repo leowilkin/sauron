@@ -242,8 +242,7 @@ def main():
 
 def _log_error(e):
     try:
-        d = eventlog.data_dir()
-        os.makedirs(d, exist_ok=True)
+        d = eventlog.make_data_dir()
         with open(os.path.join(d, "errors.log"), "a", encoding="utf-8") as f:
             f.write("%s %s: %s\n" % (eventlog.now_iso(), type(e).__name__, e))
     except Exception:
