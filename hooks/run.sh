@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Run tracker/claude_code.py with a real Python 3 (3.8+).
+# Run a tracker adapter (tracker/claude_code.py, or tracker/amp.py) with a real Python 3 (3.8+).
 # Claude Code runs hooks with bash on every OS (Git Bash on Windows).
 # Always exits 0 so a missing Python can never break a Claude Code session.
 
 here="${BASH_SOURCE[0]%/*}"   # no subshell: forks are slow on Windows
 [ "$here" = "${BASH_SOURCE[0]}" ] && here=.
-script="$here/../tracker/claude_code.py"
+# Which adapter: `run.sh amp` for the Amp plugin; no argument for the Claude Code hooks.
+case "${1:-}" in amp) adapter=amp ;; *) adapter=claude_code ;; esac
+script="$here/../tracker/$adapter.py"
 dir="${AI_TRACKER_DIR:-$HOME/.ai-tracker}"
 cache="$dir/.python"
 

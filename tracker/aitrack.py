@@ -630,6 +630,7 @@ def prompt_rows_from(events, labels, idle_min=15.0):
             elif kind == "prompt_sent":
                 cur = {"day": e["ts"][:10], "at": e["ts"], "project": e.get("project"), "session": e.get("session"),
                        "typed": e.get("chars", 0), "pasted": e.get("pasted_chars"), "origin": e.get("origin"),
+                       "source": e.get("source"),
                        "gap_s": None, "read_s": None, "break": None, "you_before_s": 0, "away": False,
                        "present_s": None, "compose_s": round(timemodel.compose_seconds(e, pace), 1),
                        "ai_s": None, "lines": 0, "reply_chars": None, "replay": bool(e.get("replay_hash")),
@@ -1072,7 +1073,7 @@ PUBLIC_DATA_ROW = {"day", "project", "sessions", "active_s", "you_s", "ai_only_s
                    "median_read_s", "fast_replies", "breaks", "typed_prompts", "typing_s", "keys_typed", "fixes",
                    "rewrites", "revisions", "drafts_abandoned", "replies", "files"}
 PUBLIC_REPLY = {"at", "gap_s", "read_s", "fast", "break"}
-PUBLIC_PROMPT_ROW = {"day", "at", "project", "session", "typed", "pasted", "origin", "gap_s", "read_s", "break", "you_before_s",
+PUBLIC_PROMPT_ROW = {"day", "at", "project", "session", "typed", "pasted", "origin", "source", "gap_s", "read_s", "break", "you_before_s",
                      "away", "present_s", "compose_s", "ai_s", "lines", "reply_chars", "typing_ms", "keys_typed",
                      "fixes", "rewrites", "revisions", "pauses", "pace", "pattern", "pattern_confidence",
                      "pattern_probs", "understanding", "read_previous", "pasted_output", "own_thinking",

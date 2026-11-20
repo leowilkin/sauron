@@ -50,6 +50,24 @@ To try it without installing, run `claude --plugin-dir ~/sauron`.
 
 **Pause:** set `AI_TRACKER_DISABLE=1`. **Move the log:** set `AI_TRACKER_DIR=/some/dir`.
 
+### Amp
+
+Sauron also tracks [Amp](https://ampcode.com). Install its plugin as a system plugin, so it runs only in Amp on this computer and logs to the same `~/.ai-tracker/`:
+
+```sh
+mkdir -p ~/.config/amp/plugins && ln -sf ~/sauron/amp/sauron ~/.config/amp/plugins/sauron
+```
+
+Then run `plugins: reload` from Amp's command palette, or start a new thread. It needs `bash` and Python 3.8+, like the Claude Code plugin. Amp lets a plugin see less than Claude Code does, so some numbers are unknown rather than 0:
+
+- No keystrokes and no typed-versus-pasted split: writing time is estimated from prompt length.
+- No session end: the last reply in a thread gets the same credit as a reply followed by a break.
+- No sender on a prompt: prompts in child threads count as the agent's, everything else as yours. In a shared thread, other people's prompts count as yours.
+- `apply_patch` across several files and edits made with shell commands have no line counts.
+- Jev and `sauron import` read Claude Code transcripts only.
+
+Don't install it as a personal plugin: personal plugins also run in orbs, where the log is lost when the orb is deleted.
+
 ## Read your stats
 
 ```sh
@@ -238,7 +256,7 @@ One JSON object per line in `~/.ai-tracker/events.jsonl`:
 |---|---|
 | `v` | Schema version. |
 | `ts` | ISO 8601, local time with offset, second precision. |
-| `source` | Which adapter wrote it (`claude-code`). Future adapters: `cursor`, `codex`, … |
+| `source` | Which adapter wrote it: `claude-code`, `amp`. |
 | `session` | The tool's session id. |
 | `event` | `session_start` (`reason`), `session_end` (`reason`, optional abandoned-draft fields), `prompt_sent` (`chars`, `pasted_chars`, optional [typing fields](#typing-claude-code-terminal)), `ai_edit` (`tool`, `file`, `lines_added`, `lines_removed`), `ai_done` (`response_text_chars`, `response_code_lines`), `subagent_done` (`agent_type`). |
 | `caps` | On `session_start`: the optional event kinds this adapter can emit (`session_end`, `ai_edit`, `subagent_done`, `away`). Left out means all of them (Claude Code). |
@@ -248,7 +266,7 @@ One JSON object per line in `~/.ai-tracker/events.jsonl`:
 | `prompt_id`, `agent_id` | Opaque ids from Claude Code, when present. |
 | `prev_hash` | SHA-256 of the previous line's bytes. The first line uses 64 zeros. |
 
-**Writing an adapter for another tool:** build a dict with `event`, `session` and the event's fields, then call `tracker/eventlog.py: append_event(ev, cwd=..., source="your-tool")`. It fills in the common fields and handles locking and the hash chain.
+**Writing an adapter for another tool:** build a dict with `event`, `session` and the event's fields, then call `tracker/eventlog.py: append_event(ev, cwd=..., source="your-tool")`. It fills in the common fields and handles locking and the hash chain. `tracker/amp.py` is a small example.
 
 Adapters send only what their tool can see:
 

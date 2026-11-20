@@ -1151,3 +1151,43 @@ class TestSyncErrors(unittest.TestCase):
         with self.assertRaises(OSError):
             sync.read_json(Fake("https://sauron.example/api/ingest", "text/html"), "https://sauron.example/api/ingest")
 
+
+class TestAmpAdapter(Base):
+    def amp(self, payload):
+        """Feed one payload to the adapter exactly as the Amp plugin does."""
+        payload = dict(payload, cwd=self.repo)
+        env = dict(os.environ, AI_TRACKER_DIR=self.data)
+        p = subprocess.run(["bash", RUN_SH, "amp"], input=json.dumps(payload).encode(), capture_output=True,
+                           env=env, timeout=10)
+        self.assertEqual((p.returncode, p.stdout), (0, b""))
+
+    def test_events_counts_and_privacy(self):
+        src = os.path.join(self.repo, "src")
+        self.amp({"event": "session_start", "session": "T-1"})
+        self.amp({"event": "prompt", "session": "T-1", "prompt_id": "m1", "prompt": SECRET_PROMPT})
+        self.amp({"event": "edit", "session": "T-1", "prompt_id": "m1", "tool": "edit_file",
+                  "paths": [os.path.join(src, "a.c")],
+                  "input": {"old_str": "a\nb\n", "new_str": "a\nB\n" + SECRET_CODE}})
+        self.amp({"event": "edit", "session": "T-1", "prompt_id": "m1", "tool": "apply_patch",
+                  "paths": [os.path.join(src, "b.c")],
+                  "input": {"patch": "*** Begin Patch\n*** Update File: src/b.c\n@@\n-x\n+y\n+z\n*** End Patch"}})
+        self.amp({"event": "edit", "session": "T-1", "prompt_id": "m1", "tool": "apply_patch",
+                  "paths": [os.path.join(src, "c.c"), os.path.join(src, "d.c")], "input": {"patch": "+q"}})
+        self.amp({"event": "done", "session": "T-1", "prompt_id": "m1", "status": "done",
+                  "text": "Done.\n```c\n" + SECRET_CODE + "```"})
+        self.amp({"event": "prompt", "session": "T-2", "prompt_id": "c1", "prompt": "subtask", "origin": "agent"})
+
+        lines = self.lines()
+        self.assertEqual([(l["event"], l["source"]) for l in lines][:2], [("session_start", "amp"), ("prompt_sent", "amp")])
+        self.assertEqual(lines[0]["caps"], ["ai_edit"])
+        self.assertEqual(lines[1]["chars"], len(SECRET_PROMPT))
+        for k in ("pasted_chars", "typing_ms", "origin"):  # Amp can't see these: left out, not 0
+            self.assertNotIn(k, lines[1])
+        edits = {l["file"]: (l.get("lines_added"), l.get("lines_removed")) for l in lines if l["event"] == "ai_edit"}
+        self.assertEqual(edits, {"src/a.c": (2, 1), "src/b.c": (2, 1), "src/c.c": (None, None), "src/d.c": (None, None)})
+        self.assertEqual((lines[-2]["response_text_chars"], lines[-2]["response_code_lines"]), (5, 1))
+        self.assertEqual(lines[-1]["origin"], "agent")
+        raw = read(os.path.join(self.data, "events.jsonl"))
+        for s in ("hunter2", "secret_function", "subtask"):
+            self.assertNotIn(s, raw)
+        self.assertEqual(aitrack.verify(os.path.join(self.data, "events.jsonl")), [])

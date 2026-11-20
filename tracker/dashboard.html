@@ -1505,6 +1505,10 @@ function buildSessions() {
 }
 let sessions = [];
 
+// Which tool an adapter wrote a prompt from, by its event source.
+const TOOLS = { "amp": "Amp", "claude-code": "Claude Code", "claude-code-import": "Claude Code" };
+function toolOf(rows) { return TOOLS[mostCommon(rows.map((r) => r.source || "claude-code"))] || "AI tool"; }
+
 function sessionStatus(s) {
   if (s.observed < 120) return `<span class="quiet">Brief</span>`;
   if (!s.judged) return `<span class="quiet">Not judged</span>`;
@@ -1519,7 +1523,7 @@ function sessionsTable(list) {
     <th><img src="assets/dot6-observed.svg" alt="">Observed</th><th><img src="assets/dot6-effort.svg" alt="">Est. Effort</th><th>Status</th></tr></thead><tbody>` +
     list.map((s) => {
       const d = wall(s.t0, s.off);
-      const tools = s.typed ? "Claude Code · typing recorded" : "Claude Code";
+      const tools = toolOf(s.rows) + (s.typed ? " · typing recorded" : "");
       return `<tr data-session="${esc(s.id)}" tabindex="0"><td><div class="sname"><b>${esc(s.title)}</b><span>${DOW[d.getUTCDay()]} ${clock(d)} · ${s.rows.length} prompt${s.rows.length === 1 ? "" : "s"} · ${tools}</span></div></td>
         <td class="proj">${esc(s.project || "?")}</td><td>${hm(s.observed)}</td><td class="eff">${s.eff == null ? "–" : hm(s.eff)}</td><td>${sessionStatus(s)}</td></tr>`;
     }).join("") + `</tbody></table>`;
@@ -1654,9 +1658,9 @@ function renderSessionDetail(id) {
       <div class="panel timeline">
         <div class="phead" style="margin-bottom:0"><h2>Timeline</h2><span class="meta">${clock(d0)} – ${clock(d1)}</span></div>
         <div class="group observed">OBSERVED ACTIVITY — what the tracker saw</div>
-        ${typing ? lane("dot7-observed.svg", "Typing", "Claude Code", typing) : ""}
+        ${typing ? lane("dot7-observed.svg", "Typing", toolOf(s.rows), typing) : ""}
         ${lane("dot7-observed.svg", "Reading & thinking", "", yours)}
-        ${lane("dot7-agent.svg", "Agent ran", "Claude Code", agent)}
+        ${lane("dot7-agent.svg", "Agent ran", toolOf(s.rows), agent)}
         ${lane("dot7-prompts.svg", "Your prompts", String(s.rows.length), prompts)}
         <div class="lsep"></div>
         <div class="group effort">ESTIMATED HUMAN EFFORT — working hypothesis, not a verdict</div>
@@ -1691,7 +1695,7 @@ function renderStatus() {
   const live = !STATIC && label === "Live log" && last && Date.now() - Date.parse(last.at) < 15 * 60000;
   $("#trackStatus").classList.toggle("idle", !live);
   $("#statusTitle").textContent = live ? `Tracking · ${last.project}` : last ? `Last active · ${last.project}` : "No activity yet";
-  $("#statusSub").textContent = STATIC ? `${label} · snapshot` : `${label} · Claude Code`;
+  $("#statusSub").textContent = STATIC ? `${label} · snapshot` : `${label} · ${last ? toolOf([last]) : "Claude Code"}`;
 }
 let currentView = "overview";
 const VIEW_TITLES = { overview: null, sessions: "Sessions", projects: "Projects", prompts: "Prompts", replays: "Replays",
