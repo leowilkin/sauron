@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""ai-tracker server: Hack Club Auth accounts, device keys, ingest, public profiles, live stats.
+"""Sauron (ai-tracker) server: Hack Club Auth accounts, device keys, ingest, public profiles, live stats.
 
 Environment:
   PUBLIC_ORIGIN        e.g. https://ai-tracker.k.hackclub.dev (OAuth redirect is <origin>/auth/callback)
@@ -65,7 +65,7 @@ def session_secret():
     return db.one("SELECT value FROM settings WHERE key = %s", ("session_secret",))["value"]
 
 
-app = FastAPI(title="ai-tracker", docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(title="Sauron", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(SessionMiddleware, secret_key=session_secret(),
                    same_site="lax", https_only=ORIGIN.startswith("https"), max_age=60 * 60 * 24 * 30)
 
@@ -476,7 +476,7 @@ def home(request: Request):
 <th>Top project</th></tr></thead><tbody>%s</tbody></table></div>""" % rows) if board else \
         '<p class="empty">Nobody has synced this week yet.</p>'
     intro = "" if me else """<div class="panel intro"><h2>Time you put in, not time the AI ran</h2>
-<p class="sub">ai-tracker runs quietly next to Claude Code. It counts your reading, thinking and typing between prompts,
+<p class="sub">Sauron runs quietly next to Claude Code. It counts your reading, thinking and typing between prompts,
 leaves out the minutes the agent worked alone, and estimates how much of your time was real effort.</p>
 <a class="btn" href="/auth/start">Sign In with Hack Club</a></div>"""
     body = intro + """<div class="panel"><div class="phead"><h2>This Week</h2><span class="meta">%s</span></div>%s</div>
@@ -640,13 +640,13 @@ def page(title, body, me=None, active="", sub="", toolbar="", status_user=None):
     status = ('<span class="live-pill idle" id="liveStatus"><img src="/assets/dot-live.svg" alt="">'
               '<b id="liveTitle">Checking…</b><span id="liveSub"></span></span>') if status_user is not None else ""
     return HTMLResponse("""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>%s · ai-tracker</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>%s · Sauron</title>
 <link rel="stylesheet" href="/assets/app.css?v=%s"></head><body class="site">
-<header class="topbar"><div class="topbar-in"><a class="wordmark" href="/">ai-tracker</a><nav aria-label="Main">%s</nav>
+<header class="topbar"><div class="topbar-in"><a class="wordmark" href="/">Sauron</a><nav aria-label="Main">%s</nav>
 <div class="bar-end">%s</div></div></header>
 <main class="wrap"><div class="pagehead"><div><h1>%s</h1><p>%s%s</p></div>%s</div>
 <div class="view">%s</div></main>
-<footer class="sitefoot"><span>ai-tracker · AGPLv3</span><a href="%s">Source</a></footer>
+<footer class="sitefoot"><span>Sauron · AGPLv3</span><a href="%s">Source</a></footer>
 <div id="tip"></div></body></html>""" % (esc(title), CSS_VERSION, links, account, esc(title), esc(sub), status, toolbar, body, REPO_URL))
 
 
