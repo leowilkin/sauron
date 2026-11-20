@@ -101,6 +101,17 @@ def git_remote(cwd):
     return url[:-4] if url.endswith(".git") else url
 
 
+OUTSIDE = "(outside project)"
+
+
+def inside_project(path):
+    """True for a path relative to the project folder; False for absolute paths and ones that climb out."""
+    if not isinstance(path, str) or not path:
+        return True
+    p = path.replace("\\", "/")
+    return not (p.startswith(("/", "~", "../")) or "/../" in p or p == ".." or (len(p) > 1 and p[1] == ":"))
+
+
 def read_new_lines(path, offset, n0, prev0):
     """(events to send, new offset, last line number, last hash, cwd by project) from byte `offset`."""
     out, cwds = [], {}
@@ -127,6 +138,8 @@ def read_new_lines(path, offset, n0, prev0):
                 prev = h
                 continue
             ev = {k: v for k, v in e.items() if k in SEND_FIELDS}
+            if not inside_project(ev.get("file")):
+                ev["file"] = OUTSIDE  # paths outside the project can name the user's folders
             ev.update(n=n, h=h, prev=e.get("prev_hash"))
             if e.get("project") and e.get("cwd"):
                 cwds.setdefault(e["project"], e["cwd"])

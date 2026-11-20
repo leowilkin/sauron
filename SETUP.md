@@ -2,11 +2,11 @@
 
 The person asked you to set up **Sauron** (the ai-tracker plugin) on this computer. Follow these steps in order. Tell them in a sentence what each step does as you go. At every **ASK** step, stop and wait for their answer; never assume yes.
 
-**What Sauron is (tell them this first, in your own words):** a Claude Code plugin that passively logs AI coding sessions to `~/.ai-tracker/` on this computer: when prompts were sent, how long the AI worked, which files it changed and by how many lines, and typing stats such as typing time and fixes. It never stores prompt text, code or AI output. A local dashboard turns the log into time spent, split into their own time, the AI's time, and an estimate of the effort they put in (an estimate, not a measurement).
+**What Sauron is (tell them this first, in your own words):** a Claude Code plugin that passively logs AI coding sessions: when prompts were sent, how long the AI worked, which files it changed and by how many lines, and typing stats such as typing time and fixes. The log stays at `~/.ai-tracker/` on this computer and is synced to their account at **https://sauron.k.hackclub.dev**, which turns it into time spent: their own time, the AI's time, and an estimate of the effort they put in (an estimate, not a measurement). The sync carries the same kind of data Hackatime already gets (project, file paths inside the project, line counts, prompt length, timings) and never prompt text, code or AI output. Admins of the Sauron server can see everyone's synced data.
 
-To estimate effort, Sauron needs to know what each prompt was doing: asking a question, directing, delegating, and so on. After every turn it asks Jev, an AI model reached through Hack Club AI, and keeps only the answer (a category and a few scores). That means **the text of each new prompt, their previous prompt, and the end of the AI's previous reply are sent to ai.hackclub.com and on to TypeSafe, who run Jev**. Things that look like API keys, passwords, emails, phone numbers, street addresses, card numbers and home folder names are removed first. That's best-effort, so anything truly secret shouldn't be in prompts anyway. Apart from this, Sauron shares nothing Hackatime doesn't already get.
+To estimate effort, Sauron needs to know what each prompt was doing: asking a question, directing, delegating, and so on. After every turn, **the text of the new prompt, their previous prompt, and the end of the AI's previous reply are sent to the Sauron server, which asks Jev (an AI model reached through Hack Club AI, run by TypeSafe) and keeps only the answer**: a category and a few scores. The text isn't stored. Things that look like API keys, passwords, emails, phone numbers, street addresses, card numbers and home folder names are removed first. That's best-effort, so anything truly secret shouldn't be in prompts anyway. They don't need a Jev or Hack Club AI key of their own.
 
-**ASK before step 1:** "Sauron sends your prompts to Hack Club AI's Jev model to work out effort, as described above. It keeps only the label, never the text. Are you OK with that?" If they say no, stop here: Sauron can't estimate effort without it. Don't install anything.
+**ASK before step 1:** "Sauron syncs your coding activity to sauron.k.hackclub.dev and sends each prompt there so Jev can work out effort. Only the label is kept, never the text. Are you OK with that?" If they say no, stop here and don't install anything.
 
 Throughout, `~` means the home folder (`%USERPROFILE%` on Windows), and `PY` means whichever Python command works in step 1.
 
@@ -64,49 +64,28 @@ After they've reloaded and sent one prompt in a **terminal** Claude Code session
 
 If nothing is logged, look at `~/.ai-tracker/errors.log` and tell them what it says.
 
-## 5. Import their past sessions (local only)
+## 5. Connect to Sauron
 
-Claude Code keeps about 30 days of transcripts. This turns them into the same counts-only log, so the dashboard has history from day one. Nothing is sent anywhere, but it reads every Claude Code transcript on this computer, including other projects. **ASK first:** "Do you want me to import your past Claude Code sessions (counts only, stays on this computer)?" Skip this step if they say no.
-
-```sh
-sauron import
-```
-
-## 6. Connect Jev (required)
-
-They need a free Hack Club AI key from https://ai.hackclub.com/dashboard.
-
-1. **Don't ask them to paste the key into this chat** (chat text is stored in transcripts). Ask them to run this in their own terminal, where it's read without echoing and saved readable only by them:
+1. Ask them to open **https://sauron.k.hackclub.dev**, sign in (with Hack Club), go to **Devices**, name this computer and click **Add Device**. The page shows a key once.
+2. **Don't ask them to paste the key into this chat** (chat text is stored in transcripts). Ask them to run this in their own terminal, where the key is read without echoing and saved readable only by them:
    ```sh
-   sauron jev --save-key
+   sauron connect https://sauron.k.hackclub.dev
    ```
-   In Claude Code they can type `! sauron jev --save-key`. Wait until they say it's done.
-2. That's all for new prompts. From now on, every turn's prompt is labelled in the background, and anything missed while offline is caught up at the next session start. Nothing to run by hand.
-3. Only if they imported history in step 5, **ASK:** "Do you also want your past sessions from the import labelled? That sends those older prompts to Jev too." If yes:
-   ```sh
-   sauron jev ~/.claude/projects --out ~/.ai-tracker/jev/imported.jsonl
-   ```
+   In Claude Code they can type `! sauron connect https://sauron.k.hackclub.dev`. Wait until they say it printed "Connected".
+3. That's all. After each turn their activity syncs in the background, and new prompts are labelled by Jev through the server a few seconds later. Prompts from before connecting aren't sent.
 
-## 7. Show them the dashboard
-
-```sh
-sauron serve
-```
-
-It opens `http://127.0.0.1:8765/`, which only this computer can reach. Point out the **Data** dropdown (**Live log** and **Imported history**), the **Prompts** list, and the **Estimated effort** card (it fills in as Jev labels prompts, a few seconds after each turn). Tell them it's an estimate, not a measurement. Prompt text isn't shown unless they add `--prompt-text`. Ctrl+C stops it.
-
-## 8. Finish
+## 6. Finish
 
 Tell them in a few lines:
-- what was installed, and where the data lives (`~/.ai-tracker/`)
-- that Jev labels each new prompt in the background, and only the labels are kept
-- how to open the dashboard again (the command in step 7)
+- what was installed, and that the local log lives in `~/.ai-tracker/`
+- that their stats are at **https://sauron.k.hackclub.dev** (their profile updates every 15 seconds while they code)
+- that only labels are kept from Jev, never prompt text
 - how to pause logging (`AI_TRACKER_DISABLE=1`) or uninstall (below)
 
 ## Rules
 
-- Never send, upload, publish or share their data or the dashboard anywhere unless they ask. Step 6 is the only thing that sends data, and only after they say yes.
-- Never print, commit or log their Hack Club AI key.
+- Never send, upload, publish or share their data anywhere other than the Sauron server they agreed to.
+- Never print, commit or log their device key.
 - Don't turn on the typing status line (`AI_TRACKER_STATUS=on`) unless they ask; watching a live fix count changes how people type.
 - If a step fails and the fix isn't obvious, stop and tell them what happened, rather than working around it.
 
@@ -117,4 +96,4 @@ claude plugin uninstall ai-tracker@ai-tracker
 claude plugin marketplace remove ai-tracker
 ```
 
-Their data stays in `~/.ai-tracker/` until they delete it. **ASK** before deleting it.
+Their local log stays in `~/.ai-tracker/` until they delete it. **ASK** before deleting it. To stop syncing without uninstalling, they can revoke the device under **Devices** on the site.

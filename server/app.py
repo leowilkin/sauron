@@ -5,6 +5,9 @@ Environment:
   PUBLIC_ORIGIN        e.g. https://sauron.k.hackclub.dev (OAuth redirect is <origin>/auth/callback)
   HCA_CLIENT_ID/SECRET from auth.hackclub.com/developer/apps
   SESSION_SECRET       optional; generated and kept in the database when unset
+  ADMINS               comma-separated usernames, Hack Club Auth ids or Slack ids who are always admins
+  JEV_API_KEY          the one Hack Club AI key used to label everyone's prompts (POST /api/label)
+  LABEL_DAILY_LIMIT    most prompts labelled per user per day with that key (default 1500)
   DATABASE_URL         postgres://... (SQLite file when unset, for local runs)
 
 Privacy: the server accepts only counts-only, Hackatime-level fields (see EVENT_FIELDS and
@@ -33,6 +36,8 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "tracker"))
 import aitrack  # noqa: E402
 import effort  # noqa: E402
+import sync  # noqa: E402  (shared path rules)
+import jev_judge  # noqa: E402
 from db import DB, dumps  # noqa: E402
 
 AUTH_BASE = "https://auth.hackclub.com"
@@ -53,6 +58,19 @@ HEX64 = re.compile(r"^[0-9a-f]{64}$")
 MAX_BATCH = 2000
 
 db = DB()
+
+
+def _scrub_outside_paths():
+    """One-off cleanup for events stored before paths outside the project were refused."""
+    rows = db.query("SELECT key_id, n, data FROM events WHERE kind = %s AND data LIKE %s", ("ai_edit", '%"file":%'))
+    for r in rows:
+        d = json.loads(r["data"])
+        if not sync.inside_project(d.get("file")):
+            d["file"] = sync.OUTSIDE
+            db.execute("UPDATE events SET data = %s WHERE key_id = %s AND n = %s", (dumps(d), r["key_id"], r["n"]))
+
+
+_scrub_outside_paths()
 
 
 def session_secret():
@@ -96,6 +114,30 @@ def key_hash(k):
 def current_user(request):
     uid = request.session.get("uid")
     return db.one("SELECT * FROM users WHERE id = %s", (uid,)) if uid else None
+
+
+def env_admin(u):
+    """Admins named in the ADMINS setting. They can't be removed from the site, only from the server settings."""
+    names = {x.strip().lower() for x in os.environ.get("ADMINS", "").split(",") if x.strip()}
+    return bool(u) and bool(names & ({str(u.get(k) or "").lower() for k in ("username", "hca_id", "slack_id")} - {""}))
+
+
+def is_admin(u):
+    return bool(u) and (bool(u.get("is_admin")) or env_admin(u))
+
+
+def admin_log(actor, action, target=None):
+    db.execute("INSERT INTO admin_log (actor_id, action, target_id, at) VALUES (%s, %s, %s, %s)",
+               (actor["id"], action, target["id"] if target else None, now_iso()))
+
+
+def require_admin(request):
+    me = current_user(request)
+    if not me:
+        raise HTTPException(401, "Sign in first")
+    if not is_admin(me):
+        raise HTTPException(404, "Not found")
+    return me
 
 
 def csrf(request):
@@ -216,9 +258,9 @@ def settings(request: Request):
 <form method="post" action="/settings/profile" class="fields">
 <input type="hidden" name="csrf_token" value="%s">
 <label>Username<input name="username" value="%s" pattern="[a-z0-9-]{2,30}" required></label>
-<label class="check-row"><input type="checkbox" name="public" value="1" %s><span>Show my profile to everyone who can open this site</span></label>
+<label class="check-row"><input type="checkbox" name="public" value="1" %s><span>Show my profile to everyone who can open this site (admins can always see it)</span></label>
 <div><button class="btn">Save</button></div></form></div>
-<div class="privacy-line"><img src="/assets/icon-lock.svg" alt=""><span>Devices send counts, timings, project names and effort labels. Never prompt text, code or AI output.</span>
+<div class="privacy-line"><img src="/assets/icon-lock.svg" alt=""><span>Devices send counts, timings, project names and effort labels. Never prompt text, code or AI output. Admins of this server can see all synced data, including private profiles.</span>
 <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="%s"><button class="plain">Sign Out</button></form></div>
 """ % (shown, "%d connected" % len(keys) if keys else "none yet", device_table, t, t, esc(u["username"]),
        "checked" if u["public"] else "", t)
@@ -296,6 +338,8 @@ def clean_event(e):
             data[k] = v
         elif isinstance(v, str):
             data[k] = v[:200]
+    if "file" in data and not sync.inside_project(data["file"]):
+        data["file"] = sync.OUTSIDE  # never store paths outside the project: they can name the user's folders
     return {"n": n, "h": h, "prev": prev, "ts": ts, "kind": e["event"], "project": data.get("project"), "data": data}
 
 
@@ -342,6 +386,51 @@ async def ingest(request: Request):
                            (k["user_id"], name[:200], url[:300]))
     _cache.pop(k["user_id"], None)
     return {"stored": stored, "head": {"n": last_n, "h": last_h}, "breaks": breaks}
+
+
+# ---------------------------------------------------------------- labelling with the shared key
+
+STATE_LIMITS = {"prompt": jev_judge.MAX_PROMPT, "ai_previous_reply_end": jev_judge.MAX_PREV,
+                "previous_prompt": jev_judge.MAX_PREV_PROMPT}
+
+
+@app.post("/api/label")
+async def label(request: Request):
+    """Label one prompt with Jev using the server's key. The text is used for this one call and never
+    stored or logged; only the label is kept, exactly as if the device had sent it."""
+    k = device(request)
+    key = os.environ.get("JEV_API_KEY")
+    if not key:
+        raise HTTPException(503, "labelling isn't set up on this server")
+    body = await request.json()
+    pid, state = body.get("prompt_id"), body.get("state")
+    if not isinstance(pid, str) or not pid or len(pid) > 100 or not isinstance(state, dict) \
+            or not isinstance(state.get("prompt"), str):
+        raise HTTPException(400, "send prompt_id and state.prompt")
+    have = db.one("SELECT data FROM labels WHERE user_id = %s AND prompt_id = %s", (k["user_id"], pid))
+    if have:
+        return json.loads(have["data"])  # already labelled: no second call
+    clean = {f: jev_judge.redact(state[f][-lim:] if f == "ai_previous_reply_end" else state[f][:lim])
+             for f, lim in STATE_LIMITS.items() if isinstance(state.get(f), str) and state[f].strip()}
+    day = datetime.date.today().isoformat()
+    used = db.one("SELECT n FROM label_usage WHERE user_id = %s AND day = %s", (k["user_id"], day))
+    if used and used["n"] >= int(os.environ.get("LABEL_DAILY_LIMIT", "1500")):
+        raise HTTPException(429, "daily labelling limit reached; it resets tomorrow")
+    db.execute("INSERT INTO label_usage (user_id, day, n) VALUES (%s, %s, 1) "
+               "ON CONFLICT (user_id, day) DO UPDATE SET n = label_usage.n + 1", (k["user_id"], day))
+    from starlette.concurrency import run_in_threadpool
+    try:
+        res = await run_in_threadpool(jev_judge.ask_jev, key, clean, 2)
+    except Exception:
+        raise HTTPException(502, "Jev didn't answer; try again later")  # no detail: it could echo the text
+    lab = dict(jev_judge.flatten(res.get("answers")), model=res.get("model"))
+    if isinstance(body.get("at"), str):
+        lab["at"] = body["at"][:40]
+    data = {f: lab[f] for f in LABEL_FIELDS if f in lab}
+    db.execute("INSERT INTO labels (user_id, prompt_id, data) VALUES (%s, %s, %s) "
+               "ON CONFLICT (user_id, prompt_id) DO UPDATE SET data = excluded.data", (k["user_id"], pid, dumps(data)))
+    _cache.pop(k["user_id"], None)
+    return data
 
 
 # ---------------------------------------------------------------- stats
@@ -443,7 +532,7 @@ def user_stats(u):
 def visible_user(request, username):
     u = db.one("SELECT * FROM users WHERE username = %s", (username,))
     me = current_user(request)
-    if not u or (not u["public"] and not (me and me["id"] == u["id"])):
+    if not u or (not u["public"] and not (me and me["id"] == u["id"]) and not is_admin(me)):
         raise HTTPException(404, "No such profile")
     return u, me
 
@@ -460,7 +549,8 @@ def profile(username: str, request: Request):
     mine = bool(me and me["id"] == u["id"])
     body = PROFILE_HTML.replace("__USER__", esc(u["username"]))
     if not u["public"]:
-        body = '<p class="notice">Only you can see this profile. <a class="link" href="/settings">Change this in Settings</a></p>' + body
+        body = ('<p class="notice">Only you and admins can see this profile. <a class="link" href="/settings">Change this in Settings</a></p>'
+                if mine else '<p class="notice">This profile is private. You can see it because you\'re an admin.</p>') + body
     return page(u["name"] or u["username"], body, me=me, active="me" if mine else "", sub="@" + u["username"],
                 toolbar=RANGE_SEG, status_user=u)
 
@@ -496,6 +586,122 @@ leaves out the minutes the agent worked alone, and estimates how much of your ti
 <div class="privacy-line"><img src="/assets/icon-lock.svg" alt=""><span>Synced: counts, timings, project names and effort labels. Never prompt text, code or AI output.</span><a href="%s">Source Code</a></div>""" % (
         "%d builder%s" % (len(board), "" if len(board) == 1 else "s"), table, REPO_URL)
     return page("This Week", body, me=me, active="week", sub="Ranked by estimated effort")
+
+
+# ---------------------------------------------------------------- admin
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_home(request: Request):
+    me = require_admin(request)
+    t = csrf(request)
+    users = db.query("SELECT * FROM users ORDER BY id")
+    rows = []
+    for u in users:
+        st = user_stats(u)
+        dev = db.one("SELECT COUNT(*) AS n FROM api_keys WHERE user_id = %s AND revoked_at IS NULL", (u["id"],))["n"]
+        if env_admin(u):
+            role = '<span class="tag blue">Admin</span> <span class="quiet">set on the server</span>'
+        elif u["is_admin"]:
+            role = ('<span class="tag blue">Admin</span> <form method="post" action="/admin/u/%s/role" class="inline">'
+                    '<input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="admin" value="0">'
+                    '<button class="plain danger">Remove</button></form>' % (esc(u["username"]), t)) \
+                if u["id"] != me["id"] else '<span class="tag blue">Admin</span> <span class="quiet">you</span>'
+        else:
+            role = ('<form method="post" action="/admin/u/%s/role" class="inline"><input type="hidden" name="csrf_token" value="%s">'
+                    '<input type="hidden" name="admin" value="1"><button class="plain">Make admin</button></form>'
+                    % (esc(u["username"]), t))
+        rows.append("""<tr><td><div class="sname"><b><a class="link" href="/admin/u/%s">%s</a></b><span>@%s%s</span></div></td>
+<td class="eff">%s</td><td>%s</td><td class="quiet">%d</td><td class="quiet">%s</td><td>%s</td><td>%s</td></tr>""" % (
+            esc(u["username"]), esc(u["name"] or u["username"]), esc(u["username"]), "" if u["public"] else " · private",
+            hm(st["week"]["effort_s"]), hm(st["all"]["effort_s"]), dev,
+            esc(ago(st["last_event"]) if st["last_event"] else "never"),
+            ('<span class="tag">%d</span>' % st["audit"]["breaks"]) if st["audit"]["breaks"] else '<span class="quiet">0</span>', role))
+    log = db.query("SELECT l.action, l.at, a.username AS actor, t.username AS target FROM admin_log l "
+                   "JOIN users a ON a.id = l.actor_id LEFT JOIN users t ON t.id = l.target_id ORDER BY l.id DESC LIMIT 50")
+    log_rows = "".join("<tr><td class='quiet'>%s</td><td>@%s</td><td>%s</td><td>%s</td></tr>" % (
+        esc(ago(r["at"])), esc(r["actor"]), esc(ADMIN_ACTIONS.get(r["action"], r["action"])),
+        ("@" + esc(r["target"])) if r["target"] else "") for r in log)
+    body = """<div class="panel"><div class="phead"><h2>Everyone</h2><span class="meta">%d user%s</span></div>
+<div class="table-scroll"><table class="stable"><thead><tr><th>User</th><th><img src="/assets/dot6-effort.svg" alt="">This week</th>
+<th>All time</th><th>Devices</th><th>Last active</th><th>Chain breaks</th><th>Role</th></tr></thead><tbody>%s</tbody></table></div></div>
+<div class="panel"><div class="phead"><h2>Admin Activity</h2><span class="meta">who did what, newest first</span></div>%s</div>
+<div class="privacy-line"><img src="/assets/icon-lock.svg" alt=""><span>Admins see everything the server holds: counts, timings, project and file names, effort labels and log checkpoints. It never receives prompt text or code. Opening someone's data is logged here.</span></div>""" % (
+        len(users), "" if len(users) == 1 else "s", "".join(rows),
+        ('<div class="table-scroll"><table class="stable"><thead><tr><th>When</th><th>Admin</th><th>Action</th><th>User</th></tr></thead>'
+         '<tbody>%s</tbody></table></div>' % log_rows) if log else '<p class="empty">Nothing yet.</p>')
+    return page("Admin", body, me=me, active="admin", sub="Every account on this server")
+
+
+ADMIN_ACTIONS = {"grant": "made admin", "revoke": "removed admin", "view": "opened data"}
+
+
+@app.post("/admin/u/{username}/role")
+def admin_role(username: str, request: Request, csrf_token: str = Form(""), admin: str = Form("")):
+    me = require_admin(request)
+    check_csrf(request, csrf_token)
+    u = db.one("SELECT * FROM users WHERE username = %s", (username,))
+    if not u:
+        raise HTTPException(404, "No such user")
+    make = admin == "1"
+    if not make and u["id"] == me["id"]:
+        raise HTTPException(400, "You can't remove your own admin access.")
+    if bool(u["is_admin"]) != make:
+        db.execute("UPDATE users SET is_admin = %s WHERE id = %s", (1 if make else 0, u["id"]))
+        admin_log(me, "grant" if make else "revoke", u)
+    return RedirectResponse("/admin", 303)
+
+
+@app.get("/admin/u/{username}", response_class=HTMLResponse)
+def admin_user(username: str, request: Request):
+    me = require_admin(request)
+    u = db.one("SELECT * FROM users WHERE username = %s", (username,))
+    if not u:
+        raise HTTPException(404, "No such user")
+    if u["id"] != me["id"]:
+        admin_log(me, "view", u)
+    st = user_stats(u)
+    devices = db.query("SELECT id, label, created_at, last_used_at, last_n, revoked_at FROM api_keys WHERE user_id = %s ORDER BY id",
+                       (u["id"],))
+    dev_rows = "".join("""<tr><td><div class="sname"><b>%s</b><span>added %s%s</span></div></td><td class="quiet">%s</td>
+<td>%s</td><td>%d</td><td>%s</td></tr>""" % (
+        esc(d["label"] or "Unnamed device"), esc(day_label(d["created_at"])), " · revoked" if d["revoked_at"] else "",
+        esc(ago(d["last_used_at"]) if d["last_used_at"] else "never"), "{:,}".format(d["last_n"]),
+        db.one("SELECT COUNT(*) AS n FROM heads WHERE key_id = %s", (d["id"],))["n"],
+        ('<span class="tag">%d</span>' % b) if (b := db.one("SELECT COUNT(*) AS n FROM heads WHERE key_id = %s AND linked = 0",
+                                                         (d["id"],))["n"]) else '<span class="quiet">0</span>')
+        for d in devices)
+    heads = db.query("SELECT h.n, h.h, h.linked, h.received_at, k.label FROM heads h JOIN api_keys k ON k.id = h.key_id "
+                     "WHERE k.user_id = %s ORDER BY h.id DESC LIMIT 20", (u["id"],))
+    head_rows = "".join("<tr><td class='quiet'>%s</td><td>%s</td><td>%s</td><td><code>%s…</code></td><td>%s</td></tr>" % (
+        esc(ago(h["received_at"])), esc(h["label"] or "device"), "{:,}".format(h["n"]), esc(h["h"][:16]),
+        '<span class="quiet">linked</span>' if h["linked"] else '<span class="tag">gap</span>') for h in heads)
+    events = db.query("SELECT ts, kind, project, data FROM events WHERE user_id = %s ORDER BY ts DESC, n DESC LIMIT 100", (u["id"],))
+    ev_rows = "".join("<tr><td class='quiet'>%s</td><td>%s</td><td class='proj'>%s</td><td class='quiet mono'>%s</td></tr>" % (
+        esc(e["ts"][:19].replace("T", " ")), esc(e["kind"]), esc(e["project"] or ""),
+        esc(", ".join("%s=%s" % (k, v) for k, v in sorted(json.loads(e["data"]).items())
+                      if k not in ("session", "project", "source", "prompt_id"))[:160])) for e in events)
+    n_events = db.one("SELECT COUNT(*) AS n FROM events WHERE user_id = %s", (u["id"],))["n"]
+    n_labels = db.one("SELECT COUNT(*) AS n FROM labels WHERE user_id = %s", (u["id"],))["n"]
+
+    def table(head, rows, empty):
+        return ('<div class="table-scroll"><table class="stable"><thead><tr>%s</tr></thead><tbody>%s</tbody></table></div>'
+                % ("".join("<th>%s</th>" % h for h in head), rows)) if rows else '<p class="empty">%s</p>' % empty
+    body = """<div class="measures">
+<div class="measure"><div class="mhead"><span class="dotlabel"><img src="/assets/dot-effort.svg" alt="">Estimated Effort</span></div><div class="big">%s</div><p>%s this week</p></div>
+<div class="measure"><div class="mhead"><span class="dotlabel"><img src="/assets/dot-observed.svg" alt="">Observed</span></div><div class="big">%s</div><p>all time</p></div>
+<div class="measure"><div class="mhead"><span class="dotlabel"><img src="/assets/dot-submitted.svg" alt="">Synced</span></div><div class="big">%s</div><p>events, %s effort labels</p></div></div>
+<div class="panel"><div class="phead"><h2>Devices</h2><a class="link" href="/u/%s">Open profile</a></div>%s</div>
+<div class="panel"><div class="phead"><h2>Log Checkpoints</h2><span class="meta">latest hash of each device's log, kept as it arrived</span></div>%s</div>
+<div class="panel"><div class="phead"><h2>Synced Events</h2><span class="meta">latest 100 of %s</span></div>%s</div>
+<div class="privacy-line"><img src="/assets/icon-lock.svg" alt=""><span>Opening this page is recorded in the admin log.</span></div>""" % (
+        hm(st["all"]["effort_s"]), hm(st["week"]["effort_s"]), hm(st["all"]["observed_s"]), "{:,}".format(n_events),
+        "{:,}".format(n_labels), esc(u["username"]),
+        table(["Device", "Last sync", "Events", "Checkpoints", "Chain breaks"], dev_rows, "No devices."),
+        table(["Received", "Device", "Line", "Hash", "Chain"], head_rows, "No checkpoints yet."),
+        "{:,}".format(n_events), table(["Time", "Event", "Project", "Counts"], ev_rows, "Nothing synced yet."))
+    return page(u["name"] or u["username"], body, me=me, active="admin",
+                sub="@%s · %s · %s" % (u["username"], "public" if u["public"] else "private",
+                                       "admin" if is_admin(u) else "member"))
 
 
 @app.get("/healthz")
@@ -559,12 +765,19 @@ body.site { background: #f5f5f7; font-size: 14px; min-height: 100vh; display: fl
 .intro .sub { font-size: 15px; line-height: 22px; max-width: 60ch; color: var(--t2); margin-bottom: 18px; }
 .plain { font: 510 13px var(--font); color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; }
 .plain.danger { color: var(--danger); }
+form.inline { display: inline; margin-left: 6px; }
+.privacy-line { flex-wrap: nowrap; align-items: flex-start; }
+.privacy-line span { flex: 1 1 auto; min-width: 0; }
+.privacy-line img { margin-top: 1px; }
+.mono { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; white-space: normal !important; }
+.stable .link { color: var(--t1); }
 .privacy-line form { margin-left: auto; }
 .inline-form { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
 .inline-form input, .fields input:not([type=checkbox]) {
   font: 14px var(--font); color: var(--t1); background: #fff; border: 0.5px solid rgba(0, 0, 0, 0.16); border-radius: 9px;
   padding: 0 11px; height: 34px; min-width: 0; flex: 1 1 220px; max-width: 360px; }
 .fields { display: flex; flex-direction: column; gap: 14px; }
+.fields input:not([type=checkbox]) { flex: none; width: 100%; }
 .fields label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 590; color: var(--t3); }
 .fields .check-row { flex-direction: row; align-items: center; gap: 8px; font-size: 14px; font-weight: 400; color: var(--t1); }
 .keypanel { background: #effbf2 !important; }
@@ -647,6 +860,8 @@ def page(title, body, me=None, active="", sub="", toolbar="", status_user=None):
     links = nav("week", "/", "This Week")
     if me:
         links += nav("me", "/u/" + esc(me["username"]), "Profile") + nav("settings", "/settings", "Devices")
+        if is_admin(me):
+            links += nav("admin", "/admin", "Admin")
     account = ('<a class="avatar" href="/u/%s" title="%s"><span>%s</span></a>'
                % (esc(me["username"]), esc(me["name"] or me["username"]), esc((me["name"] or me["username"])[:1].upper()))
                ) if me else '<a class="btn" href="/auth/start">Sign In</a>'

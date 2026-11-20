@@ -90,6 +90,17 @@ class TestServer(unittest.TestCase):
         for s in ("secret", "/Users/ada"):
             self.assertNotIn(s, dump)
 
+    def test_paths_outside_the_project_are_never_stored(self):
+        evs = self._log()
+        evs[2]["file"] = "../../../private/tmp/-Users-ada-secret/x.py"
+        self.ingest({"events": evs})
+        dump = json.dumps(self.app.db.query("SELECT data FROM events"))
+        self.assertNotIn("Users-ada", dump)
+        self.assertIn("(outside project)", dump)
+        import sync
+        for p, ok in (("src/a.py", True), ("../x", False), ("/etc/x", False), ("C:\\x", False), ("a/../../b", False)):
+            self.assertEqual(sync.inside_project(p), ok, p)
+
     def test_resending_is_idempotent_and_gaps_are_flagged(self):
         evs = self._log()
         self.ingest({"events": evs[:3]})
@@ -139,6 +150,113 @@ class TestServer(unittest.TestCase):
         r = self.c.get("/settings", follow_redirects=False)
         self.assertEqual(r.status_code, 302)
         self.assertEqual(self.c.post("/settings/keys", data={"csrf_token": "x"}).status_code, 401)
+
+
+    # ---- labelling with the shared key
+    def test_label_uses_the_shared_key_and_keeps_only_the_label(self):
+        import jev_judge
+        seen = []
+        def fake(key, state, retries=4):
+            seen.append((key, state))
+            return {"model": "jev-test", "answers": {"pattern": {"choice": "concept"}, "complexity": {"score": 2}}}
+        orig = jev_judge.ask_jev
+        jev_judge.ask_jev = fake
+        try:
+            body = {"prompt_id": "p9", "state": {"prompt": "how does this work? key=sk-hc-v1-abcdefghijklmnopqrstuv"}}
+            h = {"Authorization": "Bearer " + self.key}
+            self.assertEqual(self.c.post("/api/label", json=body, headers=h).status_code, 503)  # no key on server
+            os.environ["JEV_API_KEY"] = "shared"
+            r = self.c.post("/api/label", json=body, headers=h)
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertEqual(r.json()["pattern"], "concept")
+            self.assertEqual(seen[0][0], "shared")
+            self.assertNotIn("sk-hc-v1-abcdef", json.dumps(seen[0][1]))  # redacted before sending
+            self.assertEqual(self.c.post("/api/label", json=body, headers=h).status_code, 200)
+            self.assertEqual(len(seen), 1)  # second ask for the same prompt is free
+            dump = json.dumps(self.app.db.query("SELECT * FROM labels")) + json.dumps(self.app.db.query("SELECT * FROM events"))
+            self.assertNotIn("how does this work", dump)
+            os.environ["LABEL_DAILY_LIMIT"] = "1"
+            r = self.c.post("/api/label", json={"prompt_id": "p10", "state": {"prompt": "x"}}, headers=h)
+            self.assertEqual(r.status_code, 429)
+            self.assertEqual(self.c.post("/api/label", json=body, headers={"Authorization": "Bearer nope"}).status_code, 401)
+        finally:
+            jev_judge.ask_jev = orig
+            os.environ.pop("JEV_API_KEY", None)
+            os.environ.pop("LABEL_DAILY_LIMIT", None)
+
+    def test_client_labels_through_the_server_without_its_own_key(self):
+        import jev_judge
+        os.makedirs(os.environ["AI_TRACKER_DIR"], exist_ok=True)
+        jev_judge._set_config(server="http://testserver", jev_since="2026-01-01T00:00:00Z")
+        with open(os.path.join(os.environ["AI_TRACKER_DIR"], "server.key"), "w") as f:
+            f.write(self.key)
+        sent = []
+        def via_server(meta, state):
+            sent.append(state)
+            return {"model": "jev-test", "pattern": "direct", "complexity": 1}
+        path = os.path.join(self.tmp, "t.jsonl")
+        with open(path, "w") as f:
+            f.write(json.dumps({"type": "user", "timestamp": "2026-11-20T10:00:00Z", "sessionId": "s", "promptId": "q1",
+                                "promptSource": "typed", "message": {"content": "use a heap here"}}) + "\n")
+        self.assertIsNotNone(jev_judge.server_labeller())
+        self.assertEqual(jev_judge.auto([path], labeller=via_server), 1)
+        out = open(jev_judge.labels_path()).read()
+        self.assertIn('"pattern": "direct"', out)
+        self.assertNotIn("use a heap", out)
+
+    # ---- admins
+    def _as(self, username):
+        """Act as this user (or nobody) for the next requests."""
+        app = self.app
+        u = app.db.one("SELECT * FROM users WHERE username = %s", (username,)) if username else None
+        app.current_user = lambda request: app.db.one("SELECT * FROM users WHERE id = %s", (u["id"],)) if u else None
+        return u
+
+    def _csrf(self):
+        # settings issues a CSRF token into the session; read it back from the form
+        import re
+        html = self.c.get("/settings").text
+        return re.search(r'name="csrf_token" value="([^"]+)"', html).group(1)
+
+    def _second_user(self, public=0):
+        self.app.db.execute("INSERT INTO users (hca_id, name, username, public, created_at) VALUES (%s, %s, %s, %s, %s)",
+                            ("ident!y", "Bo", "bo", public, "2026-11-20"))
+
+    def test_admin_pages_are_hidden_from_non_admins(self):
+        self._as("ada")
+        self.assertEqual(self.c.get("/admin").status_code, 404)
+        self.assertEqual(self.c.get("/admin/u/ada").status_code, 404)
+        self._as(None)
+        self.assertEqual(self.c.get("/admin").status_code, 401)
+
+    def test_env_admin_sees_private_profiles_and_views_are_logged(self):
+        self._second_user(public=0)
+        self._as("ada")
+        self.assertEqual(self.c.get("/api/u/bo").status_code, 404)  # private, not admin yet
+        os.environ["ADMINS"] = "ada"
+        try:
+            self.assertEqual(self.c.get("/admin").status_code, 200)
+            self.assertEqual(self.c.get("/api/u/bo").status_code, 200)
+            self.assertIn("because you're an admin", self.c.get("/u/bo").text)
+            self.assertEqual(self.c.get("/admin/u/bo").status_code, 200)
+            log = self.app.db.query("SELECT action FROM admin_log")
+            self.assertEqual([r["action"] for r in log], ["view"])
+        finally:
+            os.environ.pop("ADMINS", None)
+
+    def test_grant_and_revoke_admin(self):
+        self._second_user()
+        self.app.db.execute("UPDATE users SET is_admin = 1 WHERE username = %s", ("ada",))
+        self._as("ada")
+        t = self._csrf()
+        self.assertEqual(self.c.post("/admin/u/bo/role", data={"csrf_token": "wrong", "admin": "1"}).status_code, 403)
+        self.c.post("/admin/u/bo/role", data={"csrf_token": t, "admin": "1"}, follow_redirects=False)
+        self.assertEqual(self.app.db.one("SELECT is_admin FROM users WHERE username = %s", ("bo",))["is_admin"], 1)
+        self.c.post("/admin/u/bo/role", data={"csrf_token": t, "admin": "0"}, follow_redirects=False)
+        self.assertEqual(self.app.db.one("SELECT is_admin FROM users WHERE username = %s", ("bo",))["is_admin"], 0)
+        self.assertEqual(self.c.post("/admin/u/ada/role", data={"csrf_token": t, "admin": "0"}).status_code, 400)
+        self.assertEqual([r["action"] for r in self.app.db.query("SELECT action FROM admin_log ORDER BY id")],
+                         ["grant", "revoke"])
 
 
 class TestEffortMatchesDashboard(unittest.TestCase):

@@ -148,9 +148,11 @@ def _spawn(argv):
 
 
 def _start_jev(paths):
-    """Label new prompts with Jev in the background, if a Hack Club AI key is set up. Never fails the hook."""
+    """Label new prompts with Jev in the background (own key, or through the Sauron server). Never fails the hook."""
     try:
-        if not (os.environ.get("JEV_API_KEY") or os.path.exists(os.path.join(eventlog.data_dir(), "jev.key"))):
+        d = eventlog.data_dir()
+        if not (os.environ.get("JEV_API_KEY") or os.path.exists(os.path.join(d, "jev.key"))
+                or os.path.exists(os.path.join(d, "server.key"))):
             return
         paths = [p for p in paths if p]
         if paths:

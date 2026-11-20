@@ -282,17 +282,45 @@ AUTO_MAX = 200      # most prompts one background run will send
 AUTO_WAIT_S = 300   # how long a run waits for another to finish
 
 
-def auto(paths, ask=None):
-    """Background labelling, started by the hooks: label new prompts since the key was saved.
+def server_labeller():
+    """Label through the connected Sauron server, which holds the shared Jev key. None if not connected."""
+    try:
+        import sync
+    except ImportError:
+        return None
+    if not sync.enabled():
+        return None
+    url, key = sync.config()["server"].rstrip("/") + "/api/label", sync.server_key()
 
-    Only labels and ids are written. Failures are logged and retried by the next run, since the text
-    stays in Claude Code's own transcript and is never copied anywhere by ai-tracker.
+    def label(meta, state):
+        body = json.dumps({"prompt_id": meta.get("prompt_id"), "at": meta.get("at"), "state": state}).encode("utf-8")
+        req = urllib.request.Request(url, data=body, headers={
+            "Authorization": "Bearer " + key, "Content-Type": "application/json", "User-Agent": "sauron-label/1"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return json.load(r)
+    return label
+
+
+def auto(paths, ask=None, labeller=None):
+    """Background labelling, started by the hooks: label new prompts since labelling was set up.
+
+    Uses this computer's own Jev key if it has one, otherwise the connected Sauron server (which uses one
+    shared key and keeps only the label). Only labels and ids are written here. Failures are logged and
+    retried by the next run, since the text stays in Claude Code's own transcript.
     """
-    key = load_key()
     since = _config().get("jev_since")
-    if not key or not since:
+    key = load_key()
+    if labeller is None:
+        if key:
+            ask_fn = ask or ask_jev
+
+            def labeller(meta, state):
+                res = ask_fn(key, state)
+                return dict(model=res.get("model"), **flatten(res.get("answers")))
+        else:
+            labeller = server_labeller()
+    if labeller is None or not since:
         return 0
-    ask = ask or ask_jev
     lp = labels_path()
     os.makedirs(os.path.dirname(lp), exist_ok=True)
     deadline = time.monotonic() + AUTO_WAIT_S
@@ -303,6 +331,7 @@ def auto(paths, ask=None):
             break
         lock.__exit__(None, None, None)
         time.sleep(1)
+    n = 0
     try:
         if not lock.locked:
             return 0
@@ -312,20 +341,22 @@ def auto(paths, ask=None):
             cutoff = None
         jobs = jobs_from(paths, since=since, skip=labelled_ids(lp), modified_after=cutoff,
                          need_id=True)[:AUTO_MAX]
-        n = 0
         for meta, st in jobs:
             try:
-                res = ask(key, st)
+                lab = labeller(meta, st)
             except Exception as e:
                 _log_error("jev auto: %s" % str(e)[:200])
-                break  # offline or rate-limited: the next run picks up from here
+                break  # offline, rate-limited or over quota: the next run picks up from here
+            keep = {k: lab.get(k) for k in ("model", "pattern", "pattern_confidence", "pattern_probs", "understanding",
+                                            "read_previous", "pasted_output", "own_thinking",
+                                            "own_thinking_confidence", "complexity")}
             with open(lp, "a", encoding="utf-8") as out:
-                out.write(json.dumps(dict(meta, model=res.get("model"), **flatten(res.get("answers")))) + "\n")
+                out.write(json.dumps(dict(meta, **keep)) + "\n")
             n += 1
         return n
     finally:
         lock.__exit__(None, None, None)
-        if ask is ask_jev:
+        if n and ask is None:
             _sync_labels()
 
 

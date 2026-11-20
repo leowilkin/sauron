@@ -978,6 +978,10 @@ def cmd_connect(args):
     os.replace(tmp, path)
     import jev_judge
     jev_judge._set_config(server=url)
+    if not jev_judge._config().get("jev_since"):
+        # effort labels come through the server from now on; older prompts aren't sent
+        import time
+        jev_judge._set_config(jev_since=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
     print("Connected. Sending your log (counts and labels only)...")
     n = sync.sync()
     if n < 0:

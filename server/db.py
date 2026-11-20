@@ -58,6 +58,21 @@ SCHEMA = [
         repo_url TEXT,
         PRIMARY KEY (user_id, name)
     )""",
+    # Who did what with admin powers: granting, revoking, viewing someone's data.
+    """CREATE TABLE IF NOT EXISTS admin_log (
+        id INTEGER PRIMARY KEY {auto},
+        actor_id INTEGER NOT NULL REFERENCES users(id),
+        action TEXT NOT NULL,
+        target_id INTEGER REFERENCES users(id),
+        at TEXT NOT NULL
+    )""",
+    # Jev calls made with the shared key, per user per day, for the daily cap.
+    """CREATE TABLE IF NOT EXISTS label_usage (
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        day TEXT NOT NULL,
+        n INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (user_id, day)
+    )""",
     """CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -129,6 +144,16 @@ class DB(object):
             if self.pg:
                 s = s.replace("INTEGER PRIMARY KEY GENERATED", "BIGINT PRIMARY KEY GENERATED")
             self.execute(s)
+        # Columns added after the first release. ADD COLUMN IF NOT EXISTS isn't in SQLite, so check first.
+        for table, col, decl in (("users", "is_admin", "INTEGER NOT NULL DEFAULT 0"),):
+            if not self.has_column(table, col):
+                self.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, col, decl))
+
+    def has_column(self, table, col):
+        if self.pg:
+            return bool(self.one("SELECT 1 AS x FROM information_schema.columns WHERE table_name = %s AND column_name = %s",
+                                 (table, col)))
+        return any(r["name"] == col for r in self.query("PRAGMA table_info(%s)" % table))
 
 
 class _Tx(object):
