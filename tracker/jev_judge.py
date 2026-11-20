@@ -297,7 +297,7 @@ def server_labeller():
         req = urllib.request.Request(url, data=body, headers={
             "Authorization": "Bearer " + key, "Content-Type": "application/json", "User-Agent": "sauron-label/1"})
         with urllib.request.urlopen(req, timeout=120) as r:
-            return json.load(r)
+            return sync.read_json(r, url)
     return label
 
 

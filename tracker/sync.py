@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -174,7 +175,17 @@ def post(url, key, body):
     req = urllib.request.Request(url.rstrip("/") + "/api/ingest", data=json.dumps(body).encode("utf-8"), headers={
         "Authorization": "Bearer " + key, "Content-Type": "application/json", "User-Agent": "ai-tracker-sync/1"})
     with urllib.request.urlopen(req, timeout=30) as r:
-        return json.load(r)
+        return read_json(r, url)
+
+
+def read_json(r, url):
+    """The JSON a Sauron API call returned, or a clear error when something else answered,
+    like a login page a proxy put in front of the server."""
+    if urllib.parse.urlsplit(r.geturl()).netloc != urllib.parse.urlsplit(url).netloc \
+            or "json" not in (r.headers.get("Content-Type") or ""):
+        raise OSError("the server address is behind a login page; ask its admin to let /api/ingest and /api/label "
+                      "through without it (%s)" % urllib.parse.urlsplit(r.geturl()).netloc)
+    return json.load(r)
 
 
 def sync(send=None):

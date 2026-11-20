@@ -1102,3 +1102,20 @@ class TestPresenceFit(Base):
         finally:
             presence.load = orig
         self.assertEqual(timemodel.calibrated("think_s", 60), 90)
+
+
+class TestSyncErrors(unittest.TestCase):
+    def test_login_page_gives_a_clear_error(self):
+        import sync
+
+        class Fake(object):
+            def __init__(self, url, ctype):
+                self.url, self.headers = url, {"Content-Type": ctype}
+
+            def geturl(self):
+                return self.url
+        with self.assertRaises(OSError) as e:
+            sync.read_json(Fake("https://orchard.example/auth/protect?x=1", "text/html"), "https://sauron.example/api/ingest")
+        self.assertIn("behind a login page", str(e.exception))
+        with self.assertRaises(OSError):
+            sync.read_json(Fake("https://sauron.example/api/ingest", "text/html"), "https://sauron.example/api/ingest")
