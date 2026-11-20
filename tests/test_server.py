@@ -146,6 +146,75 @@ class TestServer(unittest.TestCase):
         self.assertEqual(sync.sync(send=send), 1)
         self.assertEqual(self.app.db.one("SELECT COUNT(*) AS n FROM heads WHERE linked = 0")["n"], 0)
 
+    # ---- backfilled history
+    def _old_session(self, sid="old", days_ago=3):
+        t0 = datetime.datetime.now().astimezone() - datetime.timedelta(days=days_ago)
+        at = lambda s: (t0 + datetime.timedelta(seconds=s)).isoformat(timespec="seconds")
+        return [{"event": "session_start", "ts": at(0), "session": sid, "project": "proj", "source": "claude-code-import"},
+                {"event": "prompt_sent", "ts": at(60), "session": sid, "project": "proj", "prompt_id": sid + "-p",
+                 "chars": 200, "source": "claude-code-import", "cwd": "/Users/ada/proj", "text": "secret prompt"},
+                {"event": "ai_done", "ts": at(300), "session": sid, "project": "proj", "prompt_id": sid + "-p",
+                 "response_text_chars": 900, "source": "claude-code-import"}]
+
+    def test_imported_history_shows_on_the_profile_but_never_ranks(self):
+        live = self._log()
+        self.ingest({"events": live})
+        before = self.c.get("/api/u/ada").json()
+        dup = [dict(e, source="claude-code-import") for e in live]  # the same session s1, also in the transcripts
+        for e in dup:
+            for f in ("n", "h", "prev"):
+                e.pop(f, None)
+        imp = lambda evs, key=None: self.c.post("/api/import", json={"events": evs},
+                                                headers={"Authorization": "Bearer " + (key or self.key)})
+        self.assertEqual(imp(self._old_session(), key="nope").status_code, 401)
+        r = imp(self._old_session() + dup)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["stored"], 9)
+        self.assertEqual(imp(self._old_session()).json()["stored"], 0)  # sending it again adds nothing
+        dump = json.dumps(self.app.db.query("SELECT * FROM imported_events"))
+        for s in ("secret", "/Users/ada"):
+            self.assertNotIn(s, dump)
+        s = self.c.get("/api/u/ada").json()
+        self.assertEqual(s["imported"]["sessions"], 1)  # s1 is already in the live log: counted once, as live
+        self.assertEqual(s["imported"]["prompts"], 1)
+        self.assertEqual(s["prompts"], before["prompts"] + 1)
+        self.assertGreater(s["all"]["observed_s"], before["all"]["observed_s"])
+        self.assertEqual([x["imported"] for x in s["sessions"]], [False, True])
+        # the leaderboard and its numbers are live-only
+        self.assertEqual(self.app.user_stats(self.app.db.one("SELECT * FROM users WHERE username = 'ada'"))["prompts"],
+                         before["prompts"])
+        self.app.db.execute("DELETE FROM events")
+        self.app._cache.clear()
+        self.assertIn("Nobody has synced this week yet", self.c.get("/").text)
+
+    def test_client_sends_imported_history_once(self):
+        import sync
+        import jev_judge
+        os.makedirs(os.environ["AI_TRACKER_DIR"], exist_ok=True)
+        jev_judge._set_config(server="http://testserver")
+        with open(os.path.join(os.environ["AI_TRACKER_DIR"], "server.key"), "w") as f:
+            f.write(self.key)
+        def write_history(evs):
+            with open(sync.imported_path(), "w") as f:
+                for e in evs:
+                    f.write(json.dumps(dict(e, prev_hash="0" * 64)) + "\n")
+        write_history(self._old_session())
+        sent = []
+        def send_imported(body):
+            sent.append(body)
+            return self.c.post("/api/import", json=body, headers={"Authorization": "Bearer " + self.key}).json()
+        send = lambda body: self.ingest(body).json()
+        self.assertGreaterEqual(sync.sync(send=send, send_imported=send_imported), 0)
+        self.assertEqual(len(sent), 1)
+        self.assertNotIn("cwd", json.dumps(sent))
+        self.assertNotIn("secret prompt", json.dumps(sent))
+        sync.sync(send=send, send_imported=send_imported)
+        self.assertEqual(len(sent), 1)  # unchanged file: not sent again
+        write_history(self._old_session() + self._old_session("older", days_ago=5))
+        sync.sync(send=send, send_imported=send_imported)
+        self.assertEqual(len(sent), 2)
+        self.assertEqual(self.app.db.one("SELECT COUNT(*) AS n FROM imported_events")["n"], 6)
+
     def test_settings_needs_sign_in_and_csrf(self):
         r = self.c.get("/settings", follow_redirects=False)
         self.assertEqual(r.status_code, 302)

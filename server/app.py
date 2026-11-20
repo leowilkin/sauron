@@ -57,6 +57,7 @@ EVENT_KINDS = {"session_start", "session_end", "prompt_sent", "ai_edit", "ai_don
 PATTERNS = set(jev_judge.QUESTIONS["pattern"]["criteria"])
 MAX_SCORE = max(len(q.get("criteria") or ()) for q in jev_judge.QUESTIONS.values() if q["type"] == "score")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
+IMPORTED = "claude-code-import"  # the source the importer gives its events
 MAX_BATCH = 2000
 
 db = DB()
@@ -321,16 +322,27 @@ def device(request):
 
 def clean_event(e):
     """Keep only allowlisted, well-formed fields. Returns None for anything malformed."""
-    if not isinstance(e, dict) or e.get("event") not in EVENT_KINDS:
+    c = clean_fields(e)
+    if c is None:
         return None
     try:
         n = int(e["n"])
-        ts = str(e["ts"])
-        aitrack.parse_ts(ts)
     except (KeyError, ValueError, TypeError):
         return None
     h, prev = str(e.get("h", "")), e.get("prev")
     if not HEX64.match(h) or (prev is not None and not HEX64.match(str(prev))):
+        return None
+    return dict(c, n=n, h=h, prev=prev)
+
+
+def clean_fields(e):
+    """{ts, kind, project, data} with only allowlisted, well-formed fields, or None. Shared by live and imported."""
+    if not isinstance(e, dict) or e.get("event") not in EVENT_KINDS:
+        return None
+    try:
+        ts = str(e["ts"])
+        aitrack.parse_ts(ts)
+    except (KeyError, ValueError, TypeError):
         return None
     data = {}
     for k in EVENT_FIELDS:
@@ -343,7 +355,7 @@ def clean_event(e):
             data[k] = v[:200]
     if "file" in data and not sync.inside_project(data["file"]):
         data["file"] = sync.OUTSIDE  # never store paths outside the project: they can name the user's folders
-    return {"n": n, "h": h, "prev": prev, "ts": ts, "kind": e["event"], "project": data.get("project"), "data": data}
+    return {"ts": ts, "kind": e["event"], "project": data.get("project"), "data": data}
 
 
 def _num(v, lo, hi):
@@ -421,8 +433,31 @@ async def ingest(request: Request):
                 db.execute("INSERT INTO projects (user_id, name, repo_url) VALUES (%s, %s, %s) "
                            "ON CONFLICT (user_id, name) DO UPDATE SET repo_url = excluded.repo_url",
                            (k["user_id"], name[:200], url[:300]))
-    _cache.pop(k["user_id"], None)
+    _forget(k["user_id"])
     return {"stored": stored, "head": {"n": last_n, "h": last_h}, "breaks": breaks}
+
+
+@app.post("/api/import")
+async def import_history(request: Request):
+    """History a device backfilled from Claude Code transcripts. Same fields as /api/ingest, no hash chain.
+    Stored apart, deduplicated by content, shown on profiles as imported and never ranked."""
+    k = device(request)
+    body = await request.json()
+    events = body.get("events") if isinstance(body, dict) else None
+    if not isinstance(events, list) or len(events) > MAX_BATCH:
+        raise HTTPException(413, "send at most %d events per request" % MAX_BATCH)
+    received, stored = now_iso(), 0
+    with db.transaction():
+        for c in filter(None, map(clean_fields, events)):
+            c["data"]["source"] = IMPORTED  # whatever the device said, this is imported history
+            d = dumps(c["data"])
+            h = hashlib.sha256(("%s\n%s\n%s" % (c["kind"], c["ts"], d)).encode("utf-8")).hexdigest()
+            stored += db.execute("INSERT INTO imported_events (user_id, key_id, k, ts, kind, session, project, data, "
+                                 "received_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                                 (k["user_id"], k["id"], h, c["ts"], c["kind"], c["data"].get("session"),
+                                  c["project"], d, received)) or 0
+    _forget(k["user_id"])
+    return {"stored": stored}
 
 
 # ---------------------------------------------------------------- labelling with the shared key
@@ -466,7 +501,7 @@ async def label(request: Request):
     data = clean_label(lab)
     db.execute("INSERT INTO labels (user_id, prompt_id, data) VALUES (%s, %s, %s) "
                "ON CONFLICT (user_id, prompt_id) DO UPDATE SET data = excluded.data", (k["user_id"], pid, dumps(data)))
-    _cache.pop(k["user_id"], None)
+    _forget(k["user_id"])
     return data
 
 
@@ -476,13 +511,35 @@ _cache = {}
 _cache_lock = threading.Lock()
 
 
-def user_stats(u):
-    """Totals for a user, recomputed when new events arrive."""
+def _forget(uid):
+    with _cache_lock:
+        for history in (False, True):
+            _cache.pop((uid, history), None)
+
+
+def _imported_events(uid, live_sessions):
+    """Backfilled history, minus sessions the live log also has: those are already counted, with better data."""
+    out = []
+    for i, r in enumerate(db.query("SELECT ts, kind, session, data FROM imported_events WHERE user_id = %s "
+                                   "ORDER BY ts", (uid,))):
+        if r["session"] in live_sessions:
+            continue
+        e = json.loads(r["data"])
+        e.update(ts=r["ts"], event=r["kind"], _t=aitrack.parse_ts(r["ts"]), _line=i)
+        out.append(e)
+    return out
+
+
+def user_stats(u, history=False):
+    """Totals for a user, recomputed when new events arrive. Live, hash-chained events only, unless history:
+    then imported transcript history is added (for the profile; the leaderboard never includes it)."""
     ver = db.one("SELECT COUNT(*) AS n, MAX(received_at) AS r FROM events WHERE user_id = %s", (u["id"],))
     lab = db.one("SELECT COUNT(*) AS n FROM labels WHERE user_id = %s", (u["id"],))
-    key = (ver["n"], ver["r"], lab["n"])
+    imp = db.one("SELECT COUNT(*) AS n, MAX(received_at) AS r FROM imported_events WHERE user_id = %s",
+                 (u["id"],)) if history else None
+    key = (ver["n"], ver["r"], lab["n"], imp and (imp["n"], imp["r"]))
     with _cache_lock:
-        hit = _cache.get(u["id"])
+        hit = _cache.get((u["id"], history))
         if hit and hit[0] == key:
             return hit[1]
     evs = []
@@ -490,6 +547,11 @@ def user_stats(u):
         e = json.loads(r["data"])
         e.update(ts=r["ts"], event=r["kind"], _t=aitrack.parse_ts(r["ts"]), _line=r["n"])
         evs.append(e)
+    imported = set()
+    if history:
+        extra = _imported_events(u["id"], {e.get("session") for e in evs})
+        imported = {e.get("session") for e in extra}
+        evs.extend(extra)
     labels = {r["prompt_id"]: clean_label(json.loads(r["data"]))  # also covers labels stored before checks existed
               for r in db.query("SELECT prompt_id, data FROM labels WHERE user_id = %s", (u["id"],))}
     rows = aitrack.prompt_rows_from(evs, labels) if evs else []
@@ -526,7 +588,8 @@ def user_stats(u):
         k = r.get("session") or "?"
         you, ai = alloc.get(id(r), (0.0, 0.0))
         x = sess.setdefault(k, {"start": r["at"], "end": r["at"], "project": r.get("project") or "?", "prompts": 0,
-                                "you_s": 0.0, "ai_s": 0.0, "effort_s": 0.0, "judged": 0, "_p": {}})
+                                "you_s": 0.0, "ai_s": 0.0, "effort_s": 0.0, "judged": 0, "_p": {},
+                                "imported": k in imported})
         x["_p"][r.get("project") or "?"] = x["_p"].get(r.get("project") or "?", 0) + 1
         x["start"], x["end"] = min(x["start"], r["at"]), max(x["end"], r["at"])
         x["prompts"] += 1
@@ -561,8 +624,17 @@ def user_stats(u):
         "audit": {"devices": len(devices), "heads": sum(d["heads"] for d in devices),
                   "breaks": sum(d["breaks"] for d in devices)},
     }
+    if history:
+        t = {"sessions": len(imported), "prompts": 0, "you_s": 0.0, "effort_s": 0.0}
+        for r in rows:
+            if r.get("session") in imported:
+                you = alloc.get(id(r), (0.0, 0.0))[0]
+                t["prompts"] += 1
+                t["you_s"] += you
+                t["effort_s"] += you * effort.weight(r)
+        out["imported"] = {f: round(v) for f, v in t.items()}
     with _cache_lock:
-        _cache[u["id"]] = (key, out)
+        _cache[(u["id"], history)] = (key, out)
     return out
 
 
@@ -577,7 +649,7 @@ def visible_user(request, username):
 @app.get("/api/u/{username}")
 def api_user(username: str, request: Request):
     u, _ = visible_user(request, username)
-    return JSONResponse(user_stats(u), headers={"Cache-Control": "no-store"})
+    return JSONResponse(user_stats(u, history=True), headers={"Cache-Control": "no-store"})
 
 
 @app.get("/u/{username}", response_class=HTMLResponse)
@@ -1013,7 +1085,7 @@ function sessions(ss) {
   $("#sessMeta").textContent = ss.length ? `last ${ss.length}` : "";
   const when = (a) => new Date(a).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   $("#sessions").innerHTML = ss.length ? `<table class="stable"><thead><tr><th>Session</th><th>Project</th><th><img src="/assets/dot6-effort.svg" alt="">Effort</th><th>Your time</th><th><img src="/assets/dot6-observed.svg" alt="">Agent alone</th></tr></thead><tbody>` +
-    ss.map((x) => `<tr><td><div class="sname"><b>${when(x.start)}</b><span>${spanText(x.start, x.end)} · ${plural(x.prompts, "prompt")}</span></div></td><td class="proj">${esc(x.project)}</td><td class="eff">${x.judged ? hm(x.effort_s) : "–"}</td><td>${hm(x.you_s)}</td><td>${hm(x.ai_s)}</td></tr>`).join("") +
+    ss.map((x) => `<tr><td><div class="sname"><b>${when(x.start)}</b><span>${spanText(x.start, x.end)} · ${plural(x.prompts, "prompt")}</span></div></td><td class="proj">${esc(x.project)}${x.imported ? ' <span class="tag" title="Backfilled from Claude Code transcripts: not hash-chained, not on the leaderboard">Imported</span>' : ""}</td><td class="eff">${x.judged ? hm(x.effort_s) : "–"}</td><td>${hm(x.you_s)}</td><td>${hm(x.ai_s)}</td></tr>`).join("") +
     `</tbody></table>` : `<p class="empty">No sessions yet. Connect a device in Settings.</p>`;
 }
 function live(s) {
@@ -1027,7 +1099,8 @@ async function load() {
   if (!r.ok) return;
   stats = await r.json();
   render(); heat(stats.days); projects(stats.projects); kinds(stats.kinds, stats.judged, stats.prompts); sessions(stats.sessions || []); live(stats);
-  $("#auditLine").textContent = `Counts, timings and effort labels only, never prompt text or code. Effort is an unvalidated estimate. ${plural(stats.audit.devices, "device")}, ${plural(stats.audit.heads, "log checkpoint")} kept by the server, ${plural(stats.audit.breaks, "chain break")}.`;
+  $("#auditLine").textContent = `Counts, timings and effort labels only, never prompt text or code. Effort is an unvalidated estimate. ${plural(stats.audit.devices, "device")}, ${plural(stats.audit.heads, "log checkpoint")} kept by the server, ${plural(stats.audit.breaks, "chain break")}.` +
+    (stats.imported && stats.imported.prompts ? ` Includes ${plural(stats.imported.sessions, "session")} (${hm(stats.imported.effort_s)} effort) backfilled from Claude Code transcripts. Those aren't hash-chained and don't count on the leaderboard.` : "");
 }
 document.querySelectorAll("#rangeSeg button").forEach((b) => b.onclick = () => {
   document.querySelectorAll("#rangeSeg button").forEach((x) => x.classList.toggle("on", x === b));

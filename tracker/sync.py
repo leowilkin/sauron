@@ -4,6 +4,7 @@
 Started by the hooks after each turn once `sauron connect` has been run. Sends only the
 Hackatime-level fields in SEND_FIELDS, each line's hash and the hash it links to (so the server
 can check the chain and keep heads as they arrive), labels, and each project's git remote.
+History backfilled by `sauron import` is sent the same way (same fields, no chain) to /api/import.
 Never cwd, prompt text or anything else. Honours hide_project_names / hide_file_names in
 ~/.wakatime.cfg.
 
@@ -192,8 +193,8 @@ def urlopen(req, timeout):
         raise
 
 
-def post(url, key, body):
-    req = urllib.request.Request(url.rstrip("/") + "/api/ingest", data=json.dumps(body).encode("utf-8"), headers={
+def post(url, key, body, route="/api/ingest"):
+    req = urllib.request.Request(url.rstrip("/") + route, data=json.dumps(body).encode("utf-8"), headers={
         "Authorization": "Bearer " + key, "Content-Type": "application/json", "User-Agent": "ai-tracker-sync/1"})
     with urlopen(req, timeout=30) as r:
         return read_json(r, url)
@@ -209,12 +210,55 @@ def read_json(r, url):
     return json.load(r)
 
 
-def sync(send=None):
+def imported_path():
+    return _path("imported.jsonl")
+
+
+def _file_sig(path):
+    try:
+        s = os.stat(path)
+        return [s.st_size, s.st_mtime_ns]
+    except OSError:
+        return None
+
+
+def _sync_imported(st, send_imported, hide_proj, hide_files):
+    """Send the history `sauron import` backfilled from transcripts, whenever that file has changed.
+    The import rewrites the whole file, so it is sent from the start each time; the server keeps one copy of
+    each event and drops sessions the live log already has."""
+    path = imported_path()
+    sig = _file_sig(path)
+    if not sig or st.get("imported_sig") == sig:
+        return 0
+    stored, offset = 0, 0
+    while True:
+        evs, offset, _, _, _ = read_new_lines(path, offset, 0, None)
+        if not evs:
+            break
+        for e in evs:
+            for f in ("n", "h", "prev"):
+                e.pop(f, None)  # imported history has no chain the server could check
+            if hide_proj and e.get("project"):
+                e["project"] = _anon(e["project"])
+            if hide_files:
+                e.pop("file", None)
+        try:
+            stored += int(send_imported({"events": evs}).get("stored", 0))
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return stored  # a server from before history was accepted: try again next time
+            raise
+    st["imported_sig"] = sig
+    return stored
+
+
+def sync(send=None, send_imported=None):
     """Send everything new. Returns events stored by the server, or -1 when it couldn't sync."""
     cfg, key = config(), server_key()
     if not cfg.get("server") or not key:
         return -1
     send = send or (lambda body: post(cfg["server"], key, body))
+    send_imported = send_imported or (lambda body: post(cfg["server"], key, body, "/api/import"))
     lock = eventlog._FileLock(_path("sync.lock"))
     lock.__enter__()
     try:
@@ -247,6 +291,9 @@ def sync(send=None):
             st.update(offset=off, n=n, prev=prev, labels_offset=loff, at=eventlog.now_iso(),
                       server_head=res.get("head"))
             _save_state(st)
+        if _sync_imported(st, send_imported, hide_proj, hide_files):
+            st["imported_at"] = eventlog.now_iso()
+        _save_state(st)
         return total
     except (urllib.error.URLError, OSError, ValueError) as e:
         try:

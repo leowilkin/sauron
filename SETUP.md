@@ -40,14 +40,16 @@ Check: `sauron --help` prints usage.
 ## 3. Install the Claude Code plugin
 
 ```sh
-claude plugin marketplace add ~/sauron
+claude plugin marketplace add 2Mon/sauron
 claude plugin install ai-tracker@ai-tracker
 claude plugin list
 ```
 
+If `claude plugin marketplace list` already shows an `ai-tracker` marketplace that points at a local folder (an install from before 0.2.0, which never updates), run `claude plugin marketplace remove ai-tracker` first, then the commands above.
+
 Check: `ai-tracker@ai-tracker` shows as **enabled**. The plugin adds its own hooks, so never edit their `settings.json` for this.
 
-Then tell them: **"Run `/reload-plugins` in Claude Code (or restart it) so the tracker starts logging."** You can't do this yourself.
+Then tell them: **"Run `/reload-plugins` in Claude Code (or restart it) so the tracker starts logging. To get updates automatically, run `/plugin`, open Marketplaces, choose ai-tracker and enable auto-update."** You can't do either yourself.
 
 ## 4. Check it works
 
@@ -72,7 +74,7 @@ If nothing is logged, look at `~/.ai-tracker/errors.log` and tell them what it s
    sauron connect https://sauron.k.hackclub.dev
    ```
    In Claude Code they can type `! sauron connect https://sauron.k.hackclub.dev`. Wait until they say it printed "Connected".
-3. That's all. After each turn their activity syncs in the background, and new prompts are labelled by Jev through the server a few seconds later. Prompts from before connecting aren't sent.
+3. That's all. After each turn their activity syncs in the background, and new prompts are labelled by Jev through the server a few seconds later. Connecting also backfills their recent history from Claude Code's transcripts (about the last 30 days, counts only); it shows on their profile tagged as imported and never on the leaderboard. Prompts from before connecting aren't sent for labelling unless they choose to: `sauron label-history` asks first, then sends those prompts' text the same way.
 
 ## 6. Finish
 

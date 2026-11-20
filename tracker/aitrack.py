@@ -989,6 +989,12 @@ def cmd_connect(args):
         # effort labels come through the server from now on; older prompts aren't sent
         import time
         jev_judge._set_config(jev_since=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+    projects = os.path.join(os.path.expanduser("~"), ".claude", "projects")
+    if not os.path.exists(sync.imported_path()) and os.path.isdir(projects):
+        # backfill: what Claude Code still has from before Sauron (it keeps about 30 days), as counts only
+        import importer
+        n_files, n_events = importer.import_dir(projects, sync.imported_path())
+        print("Backfilled %d events from %d Claude Code transcripts." % (n_events, n_files))
     print("Connected. Sending your log (counts and timings, never prompt text)...")
     n = sync.sync()
     if n < 0:
@@ -997,6 +1003,46 @@ def cmd_connect(args):
     print("Sent %d events. From now on new activity is sent after each turn." % n)
     print("For effort labels, each new prompt's text (secrets removed, best-effort) also goes to the server, "
           "which has Jev label it and keeps only the label, not the text.")
+    print("Older prompts aren't labelled unless you ask: sauron label-history")
+    return 0
+
+
+def cmd_label_history(args):
+    """Opt in to effort labels for prompts from before labelling was set up. This sends their text."""
+    import time
+    import jev_judge
+    import sync
+    own_key = jev_judge.load_key()
+    if not (own_key or sync.enabled()):
+        print("Connect first (sauron connect https://SERVER), or save a Hack Club AI key (sauron jev --save-key).")
+        return 1
+    since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - args.days * 86400))
+    cur = jev_judge._config().get("jev_since")
+    if cur and cur <= since:
+        print("Prompts since %s are already being labelled." % cur[:10])
+        return 0
+    print("This sends the text of your prompts from the last %d days, with secrets removed (best-effort), to %s, "
+          "which has Jev label them. Only the labels are kept." % (
+              args.days, "Hack Club AI" if own_key else "the Sauron server"))
+    if not args.yes:
+        try:
+            ok = input("Send them? [y/N] ").strip().lower() in ("y", "yes")
+        except EOFError:
+            ok = False
+        if not ok:
+            print("Nothing sent.")
+            return 1
+    jev_judge._set_config(jev_since=since)
+    projects = os.path.join(os.path.expanduser("~"), ".claude", "projects")
+    total = 0
+    while True:
+        n = jev_judge.auto([projects])
+        total += n
+        if n < jev_judge.AUTO_MAX:
+            break
+        print("  %d labelled so far..." % total)
+    print("Labelled %d older prompts. Any left over (offline, or past the daily limit) are labelled when your next "
+          "sessions start." % total)
     return 0
 
 
@@ -1334,6 +1380,9 @@ def main(argv=None):
     cn = sub.add_parser("connect", help="send your log to an ai-tracker server (asks for a device key)")
     cn.add_argument("server", help="server address, e.g. https://sauron.k.hackclub.dev")
     sub.add_parser("sync", help="send new events to the server now")
+    lh = sub.add_parser("label-history", help="also get effort labels for older prompts (sends their text)")
+    lh.add_argument("--days", type=int, default=30, help="how far back (default 30, about what Claude Code keeps)")
+    lh.add_argument("-y", "--yes", action="store_true", help="don't ask first")
 
     pz = sub.add_parser("presence", help="compare presence data with the model's estimate of your time")
     pz.add_argument("-n", type=int, default=15, help="recent gaps to list")
@@ -1373,6 +1422,8 @@ def main(argv=None):
         return cmd_connect(args)
     if args.cmd == "sync":
         return cmd_sync(args)
+    if args.cmd == "label-history":
+        return cmd_label_history(args)
     if args.cmd == "presence":
         return cmd_presence(args)
     if args.cmd == "export-site":
@@ -1391,4 +1442,5 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    code = eventlog.run_newest("aitrack.py")  # the plugin's copy, if it's newer
+    sys.exit(main() if code is None else code)

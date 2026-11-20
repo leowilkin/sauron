@@ -1157,6 +1157,61 @@ class TestSyncErrors(unittest.TestCase):
                 s.server_close()
 
 
+class TestHandoffToNewerInstall(Base):
+    def _copy(self, name, version):
+        root = os.path.join(self.tmp, name)
+        os.makedirs(os.path.join(root, "tracker"))
+        os.makedirs(os.path.join(root, ".claude-plugin"))
+        write(os.path.join(root, "tracker", "aitrack.py"), "")
+        write(os.path.join(root, ".claude-plugin", "plugin.json"), json.dumps({"version": version}))
+        return root
+
+    def test_newer_plugin_install_wins_and_older_or_equal_dont(self):
+        conf = os.path.join(self.tmp, "claude")
+        os.makedirs(os.path.join(conf, "plugins"))
+        os.environ["CLAUDE_CONFIG_DIR"] = conf
+        try:
+            clone = self._copy("clone", "0.2.0")
+            self.assertIsNone(eventlog.newer_install(clone))  # nothing installed
+            installs = [{"scope": "user", "installPath": self._copy("p010", "0.1.0")},
+                        {"scope": "user", "installPath": self._copy("p0100", "0.10.0")},
+                        {"scope": "user", "installPath": os.path.join(self.tmp, "gone")}]
+            write(os.path.join(conf, "plugins", "installed_plugins.json"),
+                  json.dumps({"version": 2, "plugins": {"ai-tracker@ai-tracker": installs}}))
+            self.assertEqual(eventlog.newer_install(clone), installs[1]["installPath"])  # 0.10 > 0.2, numerically
+            self.assertIsNone(eventlog.newer_install(self._copy("dev", "0.10.0")))  # same version: stay
+            write(os.path.join(conf, "plugins", "installed_plugins.json"), "not json")
+            self.assertIsNone(eventlog.newer_install(clone))
+        finally:
+            os.environ.pop("CLAUDE_CONFIG_DIR", None)
+
+    def test_this_repo_has_a_readable_version(self):
+        self.assertGreaterEqual(eventlog.plugin_version(ROOT), (0, 2, 0))
+
+
+class TestLabelHistory(Base):
+    def test_opt_in_moves_the_labelling_start_back(self):
+        import argparse
+        import jev_judge
+        orig_auto, orig_key = jev_judge.auto, jev_judge.load_key
+        jev_judge.auto = lambda paths: 0
+        jev_judge.load_key = lambda: None
+        try:
+            args = argparse.Namespace(days=30, yes=True)
+            self.assertEqual(aitrack.cmd_label_history(args), 1)  # not connected, no key: nothing to label with
+            eventlog.make_data_dir()
+            write(os.path.join(self.data, "server.key"), "ait_x")
+            now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            jev_judge._set_config(server="https://sauron.example", jev_since=now)
+            self.assertEqual(aitrack.cmd_label_history(args), 0)
+            since = jev_judge._config()["jev_since"]
+            self.assertLess(since, now)
+            self.assertEqual(aitrack.cmd_label_history(argparse.Namespace(days=7, yes=True)), 0)
+            self.assertEqual(jev_judge._config()["jev_since"], since)  # never moves forward
+        finally:
+            jev_judge.auto, jev_judge.load_key = orig_auto, orig_key
+
+
 class TestConnectAddress(Base):
     def test_plain_http_only_for_this_computer(self):
         import argparse

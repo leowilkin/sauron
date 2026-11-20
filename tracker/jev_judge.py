@@ -449,4 +449,5 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    code = eventlog.run_newest("jev_judge.py")  # the plugin's copy, if it's newer
+    sys.exit(main() if code is None else code)

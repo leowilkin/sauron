@@ -38,11 +38,32 @@ Requires Claude Code and Python 3.8+ on `PATH`. No packages are needed.
 ```sh
 git clone https://github.com/2Mon/sauron ~/sauron
 mkdir -p ~/.local/bin && ln -sf ~/sauron/bin/sauron ~/.local/bin/sauron   # the `sauron` command
-claude plugin marketplace add ~/sauron
+claude plugin marketplace add 2Mon/sauron
 claude plugin install ai-tracker@ai-tracker
 ```
 
 Restart Claude Code, or run `/reload-plugins`. Logging starts immediately and needs no further setup. Because it's a plugin, your existing `settings.json` hooks are left untouched.
+
+### Updates
+
+The plugin comes from this GitHub repo, so Claude Code can keep it current. Turn that on once: run `/plugin` in Claude Code, open **Marketplaces**, choose **ai-tracker** and enable auto-update. Updates install when Claude Code starts; run `/reload-plugins` (or restart) to switch to them. To update by hand instead:
+
+```sh
+claude plugin marketplace update ai-tracker && claude plugin update ai-tracker@ai-tracker
+```
+
+The `sauron` command hands over to the installed plugin whenever the plugin is a newer version than the clone it runs from, so the command and the hooks always run the same code and `~/sauron` never needs pulling. (A working copy at the same or a newer version runs itself, for development; set `SAURON_NO_HANDOFF=1` to force that.)
+
+Releases: anything that changes `tracker/`, `hooks/` or `bin/` needs a higher `version` in `.claude-plugin/plugin.json`, or Claude Code won't install it. CI checks this on every pull request.
+
+**Installed before 0.2.0** (from a local folder, which never updates)? Switch once:
+
+```sh
+git -C ~/sauron pull
+claude plugin marketplace remove ai-tracker
+claude plugin marketplace add 2Mon/sauron
+claude plugin install ai-tracker@ai-tracker
+```
 
 To try it without installing, run `claude --plugin-dir ~/sauron`.
 
@@ -129,6 +150,9 @@ sauron import ./someones-export --out their.jsonl --utc-offset -5
 ```
 
 - Imported events go to **a separate file, never the live log**, with `"source": "claude-code-import"`. Transcripts are editable, so imported hours aren't evidence of anything.
+- **On the server:** `sauron connect` runs the import once if you haven't, and sync sends `imported.jsonl` to `/api/import` whenever it changes (same counts-only fields as live events). The server stores it apart from live events, keeps one copy of each event, and drops imported sessions the live log already has. Profiles include it, with those sessions tagged **Imported**. The leaderboard never does.
+- Claude Code deletes transcripts after 30 days by default (`cleanupPeriodDays`), so a backfill usually reaches back about a month. What the server has already received stays.
+- **Effort labels for older prompts are opt-in:** `sauron label-history [--days 30]` sends those prompts' text for labelling, as new prompts are. It asks first. Prompts past the server's daily limit are picked up when later sessions start.
 - They contain only counts and timestamps, like the hooks. To share data for calibration, send the `summarize --json` output, not your transcripts.
 - Read times are more accurate than live ones, because the import counts all text the AI wrote in a turn, not just the final message.
 - On this session, the import matched the live hooks exactly for prompts (characters and timestamps) and edits (files and line counts).

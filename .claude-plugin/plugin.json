@@ -1,6 +1,6 @@
 {
   "name": "ai-tracker",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Passive, privacy-friendly AI coding activity log: prompt/response cycles and AI-written lines, as hash-chained JSONL. No prompt text, code or model output is stored.",
   "license": "AGPL-3.0-or-later",
   "keywords": [

@@ -77,6 +77,21 @@ SCHEMA = [
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
     )""",
+    # History backfilled from Claude Code transcripts (sauron import). Kept apart from events: transcripts are
+    # editable, so these have no hash chain, show on profiles marked as imported, and never reach the leaderboard.
+    # k is a hash of the event's content, so sending the same history again adds nothing.
+    """CREATE TABLE IF NOT EXISTS imported_events (
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        key_id INTEGER NOT NULL REFERENCES api_keys(id),
+        k TEXT NOT NULL,
+        ts TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        session TEXT,
+        project TEXT,
+        data TEXT NOT NULL,
+        received_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, k)
+    )""",
     # Every head a device reported, as it arrived. A log rewritten later can't match these.
     """CREATE TABLE IF NOT EXISTS heads (
         id INTEGER PRIMARY KEY {auto},

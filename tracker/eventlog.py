@@ -29,6 +29,53 @@ def data_dir():
     return os.path.join(os.path.expanduser("~"), ".ai-tracker")
 
 
+def plugin_version(root):
+    """(major, minor, patch) from root/.claude-plugin/plugin.json, or (0,) when it can't be read."""
+    try:
+        with open(os.path.join(root, ".claude-plugin", "plugin.json"), encoding="utf-8") as f:
+            return tuple(int(x) for x in str(json.load(f)["version"]).split("."))
+    except (OSError, ValueError, KeyError, TypeError):
+        return (0,)
+
+
+def newer_install(here=None):
+    """Folder of the Claude Code plugin install when it's a newer version than this copy, else None.
+
+    The hooks run from the plugin, which Claude Code updates; the `sauron` command may run from a git clone
+    nobody pulls. Handing over to the newer copy keeps the command and the hooks on the same code. A working
+    copy that's as new or newer (someone developing Sauron) stays put.
+    """
+    here = here or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    conf = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+    try:
+        with open(os.path.join(conf, "plugins", "installed_plugins.json"), encoding="utf-8") as f:
+            installs = json.load(f)["plugins"]["ai-tracker@ai-tracker"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    best, best_v = None, plugin_version(here)
+    for i in installs if isinstance(installs, list) else []:
+        p = i.get("installPath") if isinstance(i, dict) else None
+        if p and os.path.isfile(os.path.join(p, "tracker", "aitrack.py")) and plugin_version(p) > best_v:
+            best, best_v = p, plugin_version(p)
+    return best
+
+
+def run_newest(script):
+    """Run `script` (e.g. tracker/aitrack.py) from the newest installed copy instead, if one is newer.
+    Returns its exit code, or None to carry on here."""
+    if os.environ.get("SAURON_NO_HANDOFF") == "1":
+        return None
+    root = newer_install()
+    if not root:
+        return None
+    import subprocess
+    env = dict(os.environ, SAURON_NO_HANDOFF="1")  # the newer copy runs itself, never hands over again
+    try:
+        return subprocess.call([sys.executable, os.path.join(root, "tracker", script)] + sys.argv[1:], env=env)
+    except KeyboardInterrupt:  # Ctrl+C reaches the newer copy too; it handles it, this one just exits quietly
+        return 130
+
+
 def make_data_dir():
     """Create the data folder readable only by this user (0700), and tighten one an older version made 0755.
     Its logs name projects, files and folders, which other accounts on a shared machine shouldn't see.
