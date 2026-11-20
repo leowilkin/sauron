@@ -348,7 +348,7 @@ def _log_error(msg):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap = argparse.ArgumentParser(prog="sauron jev", description=__doc__.split("\n\n")[0])
     ap.add_argument("src", nargs="?")
     ap.add_argument("--save-key", action="store_true",
                     help="type your Hack Club AI key at a hidden prompt and save it, readable only by you")

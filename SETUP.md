@@ -1,12 +1,12 @@
-# Set up ai-tracker (for an AI coding agent)
+# Set up Sauron (for an AI coding agent)
 
-The person asked you to set up **ai-tracker** on this computer. Follow these steps in order. Tell them in a sentence what each step does as you go. At every **ASK** step, stop and wait for their answer; never assume yes.
+The person asked you to set up **Sauron** (the ai-tracker plugin) on this computer. Follow these steps in order. Tell them in a sentence what each step does as you go. At every **ASK** step, stop and wait for their answer; never assume yes.
 
-**What ai-tracker is (tell them this first, in your own words):** a Claude Code plugin that passively logs AI coding sessions to `~/.ai-tracker/` on this computer: when prompts were sent, how long the AI worked, which files it changed and by how many lines, and typing stats such as typing time and fixes. It never stores prompt text, code or AI output. A local dashboard turns the log into time spent, split into their own time, the AI's time, and an estimate of the effort they put in (an estimate, not a measurement).
+**What Sauron is (tell them this first, in your own words):** a Claude Code plugin that passively logs AI coding sessions to `~/.ai-tracker/` on this computer: when prompts were sent, how long the AI worked, which files it changed and by how many lines, and typing stats such as typing time and fixes. It never stores prompt text, code or AI output. A local dashboard turns the log into time spent, split into their own time, the AI's time, and an estimate of the effort they put in (an estimate, not a measurement).
 
-To estimate effort, ai-tracker needs to know what each prompt was doing: asking a question, directing, delegating, and so on. After every turn it asks Jev, an AI model reached through Hack Club AI, and keeps only the answer (a category and a few scores). That means **the text of each new prompt, their previous prompt, and the end of the AI's previous reply are sent to ai.hackclub.com and on to TypeSafe, who run Jev**. Things that look like API keys, passwords, emails, phone numbers, street addresses, card numbers and home folder names are removed first. That's best-effort, so anything truly secret shouldn't be in prompts anyway. Apart from this, ai-tracker shares nothing Hackatime doesn't already get.
+To estimate effort, Sauron needs to know what each prompt was doing: asking a question, directing, delegating, and so on. After every turn it asks Jev, an AI model reached through Hack Club AI, and keeps only the answer (a category and a few scores). That means **the text of each new prompt, their previous prompt, and the end of the AI's previous reply are sent to ai.hackclub.com and on to TypeSafe, who run Jev**. Things that look like API keys, passwords, emails, phone numbers, street addresses, card numbers and home folder names are removed first. That's best-effort, so anything truly secret shouldn't be in prompts anyway. Apart from this, Sauron shares nothing Hackatime doesn't already get.
 
-**ASK before step 1:** "ai-tracker sends your prompts to Hack Club AI's Jev model to work out effort, as described above. It keeps only the label, never the text. Are you OK with that?" If they say no, stop here: ai-tracker can't estimate effort without it. Don't install anything.
+**ASK before step 1:** "Sauron sends your prompts to Hack Club AI's Jev model to work out effort, as described above. It keeps only the label, never the text. Are you OK with that?" If they say no, stop here: Sauron can't estimate effort without it. Don't install anything.
 
 Throughout, `~` means the home folder (`%USERPROFILE%` on Windows), and `PY` means whichever Python command works in step 1.
 
@@ -26,17 +26,21 @@ Run these and note the results:
 ## 2. Get the code
 
 ```sh
-git clone https://github.com/OWNER/ai-tracker ~/ai-tracker
+git clone https://github.com/2Mon/sauron ~/sauron
 ```
 
-If `~/ai-tracker` already exists and is this repo, run `git -C ~/ai-tracker pull` instead. If it exists and is something else, **ASK** before touching it.
+If `~/sauron` already exists and is this repo, run `git -C ~/sauron pull` instead. If it exists and is something else, **ASK** before touching it.
 
-Check: `PY ~/ai-tracker/tracker/aitrack.py --help` prints usage.
+Then add the `sauron` command:
+- macOS/Linux: `mkdir -p ~/.local/bin && ln -sf ~/sauron/bin/sauron ~/.local/bin/sauron`. If `~/.local/bin` isn't on their PATH, tell them, and use `~/sauron/bin/sauron` in place of `sauron` below.
+- Windows: use `%USERPROFILE%\sauron\bin\sauron.cmd` in place of `sauron` below, or add that folder to PATH if they agree.
+
+Check: `sauron --help` prints usage.
 
 ## 3. Install the Claude Code plugin
 
 ```sh
-claude plugin marketplace add ~/ai-tracker
+claude plugin marketplace add ~/sauron
 claude plugin install ai-tracker@ai-tracker
 claude plugin list
 ```
@@ -48,7 +52,7 @@ Then tell them: **"Run `/reload-plugins` in Claude Code (or restart it) so the t
 ## 4. Check it works
 
 ```sh
-cd ~/ai-tracker && PY -m unittest discover -s tests
+cd ~/sauron && PY -m unittest discover -s tests
 ```
 
 All tests should pass. If any fail, show them the failure and stop.
@@ -56,7 +60,7 @@ All tests should pass. If any fail, show them the failure and stop.
 After they've reloaded and sent one prompt in a **terminal** Claude Code session:
 - `~/.ai-tracker/events.jsonl` exists and its last lines include `"event":"prompt_sent"`.
 - That line has `typing_ms`. If it doesn't, the typing module didn't load: tell them typing stats only work in the terminal version of Claude Code, not the VS Code extension or desktop app.
-- `PY ~/ai-tracker/tracker/aitrack.py verify` says `OK`.
+- `sauron verify` says `OK`.
 
 If nothing is logged, look at `~/.ai-tracker/errors.log` and tell them what it says.
 
@@ -65,7 +69,7 @@ If nothing is logged, look at `~/.ai-tracker/errors.log` and tell them what it s
 Claude Code keeps about 30 days of transcripts. This turns them into the same counts-only log, so the dashboard has history from day one. Nothing is sent anywhere, but it reads every Claude Code transcript on this computer, including other projects. **ASK first:** "Do you want me to import your past Claude Code sessions (counts only, stays on this computer)?" Skip this step if they say no.
 
 ```sh
-PY ~/ai-tracker/tracker/aitrack.py import
+sauron import
 ```
 
 ## 6. Connect Jev (required)
@@ -74,19 +78,19 @@ They need a free Hack Club AI key from https://ai.hackclub.com/dashboard.
 
 1. **Don't ask them to paste the key into this chat** (chat text is stored in transcripts). Ask them to run this in their own terminal, where it's read without echoing and saved readable only by them:
    ```sh
-   PY ~/ai-tracker/tracker/jev_judge.py --save-key
+   sauron jev --save-key
    ```
-   In Claude Code they can type `! PY ~/ai-tracker/tracker/jev_judge.py --save-key`. Wait until they say it's done.
+   In Claude Code they can type `! sauron jev --save-key`. Wait until they say it's done.
 2. That's all for new prompts. From now on, every turn's prompt is labelled in the background, and anything missed while offline is caught up at the next session start. Nothing to run by hand.
 3. Only if they imported history in step 5, **ASK:** "Do you also want your past sessions from the import labelled? That sends those older prompts to Jev too." If yes:
    ```sh
-   PY ~/ai-tracker/tracker/jev_judge.py ~/.claude/projects --out ~/.ai-tracker/jev/imported.jsonl
+   sauron jev ~/.claude/projects --out ~/.ai-tracker/jev/imported.jsonl
    ```
 
 ## 7. Show them the dashboard
 
 ```sh
-PY ~/ai-tracker/tracker/aitrack.py serve
+sauron serve
 ```
 
 It opens `http://127.0.0.1:8765/`, which only this computer can reach. Point out the **Data** dropdown (**Live log** and **Imported history**), the **Prompts** list, and the **Estimated effort** card (it fills in as Jev labels prompts, a few seconds after each turn). Tell them it's an estimate, not a measurement. Prompt text isn't shown unless they add `--prompt-text`. Ctrl+C stops it.

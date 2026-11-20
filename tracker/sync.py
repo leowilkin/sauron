@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Send new log lines and Jev labels to the ai-tracker server, in the background.
 
-Started by the hooks after each turn once `aitrack connect` has been run. Sends only the
+Started by the hooks after each turn once `sauron connect` has been run. Sends only the
 Hackatime-level fields in SEND_FIELDS, each line's hash and the hash it links to (so the server
 can check the chain and keep heads as they arrive), labels, and each project's git remote.
 Never cwd, prompt text or anything else. Honours hide_project_names / hide_file_names in
@@ -218,4 +218,4 @@ if __name__ == "__main__":
     if os.environ.get("AI_TRACKER_DISABLE") != "1":
         r = sync()
         if len(sys.argv) > 1 and sys.argv[1] == "--verbose":
-            print("synced %d new events" % r if r >= 0 else "not synced (see errors.log, or run aitrack connect)")
+            print("synced %d new events" % r if r >= 0 else "not synced (see errors.log, or run sauron connect)")

@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """aitrack: read ~/.ai-tracker/events.jsonl.
 
-  aitrack summarize [--days N | --since YYYY-MM-DD] [--project NAME] [--idle MIN] [--json] [--top N]
-  aitrack verify
-  aitrack import [DIR] [--out FILE] [--utc-offset H]
-  aitrack serve [FILE_OR_DIR ...] [--port 8765] [--idle MIN] [--no-open]
+  sauron summarize [--days N | --since YYYY-MM-DD] [--project NAME] [--idle MIN] [--json] [--top N]
+  sauron verify
+  sauron import [DIR] [--out FILE] [--utc-offset H]
+  sauron serve [FILE_OR_DIR ...] [--port 8765] [--idle MIN] [--no-open]
 
 summarize, per project per day:
   * credited time: "you" (reading, thinking, typing between turns) plus "AI
@@ -362,7 +362,7 @@ def cmd_summarize(args):
         if args.replies:
             print_replies(out)
         if bad:
-            print("(%d unreadable line%s skipped; run `aitrack verify`)" % (bad, "" if bad == 1 else "s"))
+            print("(%d unreadable line%s skipped; run `sauron verify`)" % (bad, "" if bad == 1 else "s"))
     return 0
 
 
@@ -492,7 +492,7 @@ def cmd_import(args):
         return 1
     n_files, n_events = importer.import_dir(src, out, args.utc_offset)
     print("Imported %d events from %d transcripts into %s" % (n_events, n_files, out))
-    print("See it with:  aitrack --file %s summarize" % out)
+    print("See it with:  sauron --file %s summarize" % out)
     return 0
 
 
@@ -665,7 +665,7 @@ MAX_PASTE_PREVIEW = 300
 def prompt_texts(dirs):
     """{prompt_id: text} from Claude Code transcripts, secrets redacted, long pastes shortened.
 
-    Read only when asked for (aitrack serve shows your own; export-site only with --prompt-text).
+    Read only when asked for (sauron serve shows your own; export-site only with --prompt-text).
     """
     import claude_code
     import importer
@@ -990,7 +990,7 @@ def cmd_connect(args):
 def cmd_sync(args):
     import sync
     if not sync.enabled():
-        print("Not connected. Run: aitrack connect https://SERVER")
+        print("Not connected. Run: sauron connect https://SERVER")
         return 1
     n = sync.sync()
     print("Sent %d new events." % n if n >= 0 else "Couldn't sync; see %s" % os.path.join(eventlog.data_dir(), "errors.log"))
@@ -1280,7 +1280,7 @@ def cmd_serve(args):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="aitrack", description="Summarize or verify the AI activity log.")
+    ap = argparse.ArgumentParser(prog="sauron", description="Sauron: summarize, verify, view and sync your AI coding log.")
     ap.add_argument("--file", help="log file (default: %s)" % eventlog.log_path())
     sub = ap.add_subparsers(dest="cmd")
 
@@ -1305,7 +1305,7 @@ def main(argv=None):
     im.add_argument("--utc-offset", type=float, help="hours from UTC for day boundaries (default: this machine's)")
 
     cn = sub.add_parser("connect", help="send your log to an ai-tracker server (asks for a device key)")
-    cn.add_argument("server", help="server address, e.g. https://ai-tracker.k.hackclub.dev")
+    cn.add_argument("server", help="server address, e.g. https://sauron.k.hackclub.dev")
     sub.add_parser("sync", help="send new events to the server now")
 
     pz = sub.add_parser("presence", help="compare presence data with the model's estimate of your time")

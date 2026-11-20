@@ -1,0 +1,16 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# sauron: the command line for Sauron (summaries, dashboard, sync, Jev).
+#   sauron summarize | verify | serve | connect URL | sync | presence | import | export-site ...
+#   sauron jev --save-key | jev TRANSCRIPTS --out FILE
+src=$0
+while [ -L "$src" ]; do
+  dir=$(cd "$(dirname "$src")" && pwd)
+  src=$(readlink "$src")
+  case $src in /*) ;; *) src=$dir/$src ;; esac
+done
+root=$(cd "$(dirname "$src")/.." && pwd)
+py=$(command -v python3 || command -v python)
+if [ -z "$py" ]; then echo "sauron: Python 3 not found" >&2; exit 1; fi
+if [ "$1" = jev ]; then shift; exec "$py" "$root/tracker/jev_judge.py" "$@"; fi
+exec "$py" "$root/tracker/aitrack.py" "$@"

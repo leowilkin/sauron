@@ -143,7 +143,7 @@ def _diff_lines_by_prompt(evs):
 
 
 def calibrated(name, default):
-    """A personal constant saved by `aitrack presence --fit --apply` in config.json, or the default."""
+    """A personal constant saved by `sauron presence --fit --apply` in config.json, or the default."""
     import json
     import os
     data = os.path.expanduser(os.environ.get("AI_TRACKER_DIR") or os.path.join("~", ".ai-tracker"))

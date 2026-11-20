@@ -1,4 +1,6 @@
-# ai-tracker
+# Sauron
+
+(The plugin and data folder are still called `ai-tracker`.)
 
 Passive, privacy-friendly logging of AI coding sessions. This is the first building block of an AI time tracker for Hack Club.
 
@@ -25,7 +27,7 @@ A Claude Code plugin logs every prompt → response cycle and every AI file edit
 
 Paste this into Claude Code (or any coding agent):
 
-> Set up ai-tracker for me by following https://github.com/OWNER/ai-tracker/blob/main/SETUP.md. Ask me before installing anything or sending any of my data anywhere.
+> Set up ai-tracker for me by following https://github.com/2Mon/sauron/blob/main/SETUP.md. Ask me before installing anything or sending any of my data anywhere.
 
 The agent checks for Python, installs the plugin, verifies it's logging, imports your recent history, offers the optional Jev struggle estimate (asking first, since it sends prompt text), and shows you the dashboard. [SETUP.md](SETUP.md) is written for the agent, but it's readable by people too.
 
@@ -34,14 +36,15 @@ The agent checks for Python, installs the plugin, verifies it's logging, imports
 Requires Claude Code and Python 3.8+ on `PATH`. No packages are needed.
 
 ```sh
-git clone <this repo> ~/ai-tracker
-claude plugin marketplace add ~/ai-tracker
+git clone https://github.com/2Mon/sauron ~/sauron
+mkdir -p ~/.local/bin && ln -sf ~/sauron/bin/sauron ~/.local/bin/sauron   # the `sauron` command
+claude plugin marketplace add ~/sauron
 claude plugin install ai-tracker@ai-tracker
 ```
 
 Restart Claude Code, or run `/reload-plugins`. Logging starts immediately and needs no further setup. Because it's a plugin, your existing `settings.json` hooks are left untouched.
 
-To try it without installing, run `claude --plugin-dir ~/ai-tracker`.
+To try it without installing, run `claude --plugin-dir ~/sauron`.
 
 **Uninstall:** `claude plugin uninstall ai-tracker@ai-tracker`. The log stays in `~/.ai-tracker/` until you delete it.
 
@@ -50,12 +53,12 @@ To try it without installing, run `claude --plugin-dir ~/ai-tracker`.
 ## Read your stats
 
 ```sh
-python3 ~/ai-tracker/tracker/aitrack.py summarize              # everything, per project per day
-python3 ~/ai-tracker/tracker/aitrack.py summarize --days 7 --project greg
-python3 ~/ai-tracker/tracker/aitrack.py summarize --replies    # + every reply gap vs its read time
-python3 ~/ai-tracker/tracker/aitrack.py summarize --idle 10    # stricter break cutoff
-python3 ~/ai-tracker/tracker/aitrack.py summarize --json       # for scripts / a future server
-python3 ~/ai-tracker/tracker/aitrack.py verify                 # check the record links, print the head
+sauron summarize              # everything, per project per day
+sauron summarize --days 7 --project greg
+sauron summarize --replies    # + every reply gap vs its read time
+sauron summarize --idle 10    # stricter break cutoff
+sauron summarize --json       # for scripts / a future server
+sauron verify                 # check the record links, print the head
 ```
 
 On Windows, use `python` or `py -3` instead of `python3`.
@@ -63,8 +66,8 @@ On Windows, use `python` or `py -3` instead of `python3`.
 ### Dashboard
 
 ```sh
-python3 ~/ai-tracker/tracker/aitrack.py serve                  # your live log + imported history
-python3 ~/ai-tracker/tracker/aitrack.py serve ~/ai-data        # + every .jsonl in a folder (friends' imports)
+sauron serve                  # your live log + imported history
+sauron serve ~/ai-data        # + every .jsonl in a folder (friends' imports)
 ```
 
 This opens `http://127.0.0.1:8765/`, a single local page with no external libraries, so it works offline. It shows:
@@ -90,7 +93,7 @@ echo '{"presence": true}' > ~/.ai-tracker/config.json
 It starts with your next Claude Code prompt, runs one copy at a time, and exits after 30 minutes without Claude Code activity. Every 5 seconds it records **keyboard/mouse idle time** and **the kind of app in front**: terminal, editor, browser, AI app, other, or locked. **It never stores app names, window titles or anything on screen.** The data stays in `~/.ai-tracker/presence/` (a line per change, plus a heartbeat each minute), at about 25 ms per sample.
 
 ```sh
-python3 ~/ai-tracker/tracker/aitrack.py presence     # what presence saw in each reply gap vs. what the model credited
+sauron presence     # what presence saw in each reply gap vs. what the model credited
 ```
 
 To turn it off, set `"presence": false` (it stops within a few seconds) or delete the config file.
@@ -100,7 +103,7 @@ Supported on macOS (`ioreg`, `lsappinfo`) and Windows (Win32 calls). On Linux it
 ### Publish a snapshot
 
 ```sh
-python3 ~/ai-tracker/tracker/aitrack.py export-site ~/ai-data --out ./site
+sauron export-site ~/ai-data --out ./site
 ```
 
 This writes `site/index.html` and `site/data.json`, the same dashboard working from a frozen copy of the data, for hosting anywhere static, such as a claude.ai Artifact. File paths, session ids and prompt ids are removed. Project names, timings, counts and layout-only replays stay, so check with anyone whose data is included before sharing the link widely.
@@ -110,7 +113,7 @@ This writes `site/index.html` and `site/data.json`, the same dashboard working f
 `tracker/jev_judge.py` asks Jev (TypeSafe's classification model, via Hack Club AI) what each prompt in a set of transcripts is doing: directing, delegating, reviewing the AI's work, handing errors back, asking to understand, and so on. It also scores how much of the person's own thinking the prompt shows. Jev sees **text only**, never the tracker's timing or size signals, so its labels can be compared with those signals without circularity.
 
 ```sh
-JEV_API_KEY=... python3 ~/ai-tracker/tracker/jev_judge.py ./their-transcripts --out ~/ai-data/jev/NAME.jsonl
+JEV_API_KEY=... sauron jev ./their-transcripts --out ~/ai-data/jev/NAME.jsonl
 ```
 
 **This sends prompt text to ai.hackclub.com, and from there to TypeSafe.** Use it only with the transcript owner's agreement. The output file holds labels and ids only. Place it in `jev/` next to the matching imported log (same file name), and `aitrack serve` adds a **prompt patterns** section for that log. This is a research tool for working out what productive struggle looks like. It's not part of the passive tracker.
@@ -120,9 +123,9 @@ JEV_API_KEY=... python3 ~/ai-tracker/tracker/jev_judge.py ./their-transcripts --
 Claude Code keeps every past session in `~/.claude/projects/`. You can turn those into events and get stats for the time before you installed the tracker:
 
 ```sh
-python3 ~/ai-tracker/tracker/aitrack.py import                     # ~/.claude/projects → ~/.ai-tracker/imported.jsonl
-python3 ~/ai-tracker/tracker/aitrack.py --file ~/.ai-tracker/imported.jsonl summarize
-python3 ~/ai-tracker/tracker/aitrack.py import ./someones-export --out their.jsonl --utc-offset -5
+sauron import                     # ~/.claude/projects → ~/.ai-tracker/imported.jsonl
+sauron --file ~/.ai-tracker/imported.jsonl summarize
+sauron import ./someones-export --out their.jsonl --utc-offset -5
 ```
 
 - Imported events go to **a separate file, never the live log**, with `"source": "claude-code-import"`. Transcripts are editable, so imported hours aren't evidence of anything.
@@ -264,12 +267,12 @@ events.jsonl ──▶ tracker/timemodel.py (segments → credited time) ──�
 
 ## Server
 
-`server/` is the ai-tracker server: Hack Club Auth accounts, public-by-default profiles with live stats, per-project totals linked to each project's git remote, and an ingest API. It runs at https://ai-tracker.k.hackclub.dev (Orchard, YSWS org).
+`server/` is the Sauron server: Hack Club Auth accounts, public-by-default profiles with live stats, per-project totals linked to each project's git remote, and an ingest API. It runs at https://sauron.k.hackclub.dev (Orchard, YSWS org).
 
 Connect a computer to it:
 
 1. Sign in at the server, open **Settings → Add a device** and copy the key.
-2. Run `python3 ~/ai-tracker/tracker/aitrack.py connect https://ai-tracker.k.hackclub.dev` and paste the key at the hidden prompt.
+2. Run `sauron connect https://sauron.k.hackclub.dev` and paste the key at the hidden prompt.
 
 After that, the hooks send new activity in the background after each turn. Only allowlisted fields are sent, and the server drops anything outside its own allowlist too:
 - counts and timings
@@ -333,7 +336,7 @@ Nothing else leaves your machine.
 
 ```sh
 python3 -m unittest discover -s tests -v     # Python: hooks, time model, importer, reports
-claude plugin test ~/ai-tracker               # the typing module's keystroke logic
+claude plugin test ~/sauron               # the typing module's keystroke logic
 ```
 
 The tests cover the dashboard's data sources, the All days and `--replies` output, the transcript importer, read time (response size parsing, stretched break limits, break credit, fast-reply flags, matching late edits by `prompt_id`), the time model (parallel sessions never double-count, breaks, interrupted and long AI turns, midnight splitting), plus line counts (using payload shapes captured from real Claude Code hook input), the end-to-end hook through `run.sh`, privacy (secrets in prompts, code and output never reach the log), project and worktree detection, garbage stdin, an unwritable log dir, hash chain tamper detection, a truncated last line, concurrent writers, and the summarize math.

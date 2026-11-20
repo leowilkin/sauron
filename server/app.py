@@ -2,7 +2,7 @@
 """Sauron (ai-tracker) server: Hack Club Auth accounts, device keys, ingest, public profiles, live stats.
 
 Environment:
-  PUBLIC_ORIGIN        e.g. https://ai-tracker.k.hackclub.dev (OAuth redirect is <origin>/auth/callback)
+  PUBLIC_ORIGIN        e.g. https://sauron.k.hackclub.dev (OAuth redirect is <origin>/auth/callback)
   HCA_CLIENT_ID/SECRET from auth.hackclub.com/developer/apps
   SESSION_SECRET       optional; generated and kept in the database when unset
   DATABASE_URL         postgres://... (SQLite file when unset, for local runs)
@@ -38,7 +38,7 @@ from db import DB, dumps  # noqa: E402
 AUTH_BASE = "https://auth.hackclub.com"
 SCOPES = "openid profile email name slack_id verification_status"
 ORIGIN = os.environ.get("PUBLIC_ORIGIN", "http://127.0.0.1:8000").rstrip("/")
-REPO_URL = "https://github.com/2Mon/ai-tracker"
+REPO_URL = "https://github.com/2Mon/sauron"
 
 EVENT_FIELDS = {
     "session", "project", "prompt_id", "source", "agent_id", "reason", "agent_type",
@@ -66,6 +66,19 @@ def session_secret():
 
 
 app = FastAPI(title="Sauron", docs_url=None, redoc_url=None, openapi_url=None)
+
+
+@app.middleware("http")
+async def canonical_host(request: Request, call_next):
+    """Send browsers on an old address (ai-tracker.k.hackclub.dev) to the current one. The API keeps
+    answering on every address, so devices connected before a rename keep syncing."""
+    want = urllib.parse.urlsplit(ORIGIN).netloc
+    host = request.headers.get("host", "")
+    if want and host and host != want and not host.startswith(("127.0.0.1", "localhost", "testserver")) \
+            and not request.url.path.startswith(("/api/", "/healthz")):
+        q = ("?" + request.url.query) if request.url.query else ""
+        return RedirectResponse(ORIGIN + request.url.path + q, 301)
+    return await call_next(request)
 app.add_middleware(SessionMiddleware, secret_key=session_secret(),
                    same_site="lax", https_only=ORIGIN.startswith("https"), max_age=60 * 60 * 24 * 30)
 
@@ -186,8 +199,8 @@ def settings(request: Request):
     if new_key:
         shown = """<div class="panel keypanel"><div class="phead"><h2>Finish connecting this device</h2>
 <span class="meta">The key is shown once</span></div>
-<p class="sub">Run this on the computer you code on, then paste the key at the hidden prompt.</p>
-<pre class="cmd">python3 ~/ai-tracker/tracker/aitrack.py connect %s</pre>
+<p class="sub">Run this on the computer you code on, then paste the key at the hidden prompt. No <code>sauron</code> command yet? Use <code>python3 ~/sauron/tracker/aitrack.py</code> instead.</p>
+<pre class="cmd">sauron connect %s</pre>
 <div class="keyrow"><code id="key">%s</code><button class="glass" type="button" onclick="navigator.clipboard.writeText(document.getElementById('key').textContent);this.textContent='Copied'">Copy</button></div></div>""" % (esc(ORIGIN), esc(new_key))
     device_table = ("""<div class="table-scroll"><table class="stable"><thead><tr><th>Device</th><th>Last sync</th><th>Sent</th><th></th></tr></thead>
 <tbody>%s</tbody></table></div>""" % rows) if keys else \
