@@ -111,8 +111,11 @@ def unique_username(base):
 
 @app.get("/auth/start")
 def auth_start(request: Request):
-    if not os.environ.get("HCA_CLIENT_ID"):
-        raise HTTPException(500, "HCA_CLIENT_ID is not configured")
+    missing = [k for k in ("HCA_CLIENT_ID", "HCA_CLIENT_SECRET") if not os.environ.get(k)]
+    if missing:
+        return page("Sign-in not set up", "<h1>Sign-in isn't set up yet</h1><p>The server is missing %s. "
+                    "Add it as a secret environment variable on the deployment, then try again.</p>"
+                    % " and ".join("<code>%s</code>" % k for k in missing))
     state = secrets.token_urlsafe(24)
     request.session["oauth_state"] = state
     q = urllib.parse.urlencode({"client_id": os.environ["HCA_CLIENT_ID"], "redirect_uri": ORIGIN + "/auth/callback",
