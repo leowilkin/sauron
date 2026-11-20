@@ -76,6 +76,8 @@ If nothing is logged, look at `~/.ai-tracker/errors.log` and tell them what it s
    In Claude Code they can type `! sauron connect https://sauron.k.hackclub.dev`. Wait until they say it printed "Connected".
 3. That's all. After each turn their activity syncs in the background, and new prompts are labelled by Jev through the server a few seconds later. Connecting also backfills their recent history from Claude Code's transcripts (about the last 30 days, counts only); it shows on their profile tagged as imported and never on the leaderboard. Prompts from before connecting aren't sent for labelling unless they choose to: `sauron label-history` asks first, then sends those prompts' text the same way.
 
+4. Optional: if they also use other coding agents (Codex, Gemini CLI, OpenCode, Amp…) and want tokens and spend per model on their profile, **ASK** before installing [ccusage](https://github.com/ryoppippi/ccusage): `npm install -g ccusage` (needs Node), then `sauron sync`. It sends only daily token counts and ccusage's cost estimate per agent and model, and only they and admins see the cost.
+
 ## 6. Finish
 
 Tell them in a few lines:

@@ -39,6 +39,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(HERE), "tracker"))
 import aitrack  # noqa: E402
 import effort  # noqa: E402
 import sync  # noqa: E402  (shared path rules)
+import usage  # noqa: E402  (shared name rules)
 import jev_judge  # noqa: E402
 from db import DB, dumps  # noqa: E402
 
@@ -460,6 +461,56 @@ async def import_history(request: Request):
     return {"stored": stored}
 
 
+MAX_TOKENS = 10 ** 13
+MAX_COST = 10 ** 6
+
+
+def clean_usage_row(r):
+    """{day, agent, model, input, output, cache_write, cache_read, cost} from a device, or None if malformed."""
+    if not isinstance(r, dict):
+        return None
+    day, agent, model = r.get("day"), r.get("agent"), r.get("model")
+    if not all(isinstance(v, str) for v in (day, agent, model)) or not usage.DAY.match(day) \
+            or not usage.NAME.match(agent) or not usage.NAME.match(model):
+        return None
+    try:
+        if datetime.date.fromisoformat(day) > datetime.date.today() + datetime.timedelta(days=1):
+            return None
+    except ValueError:
+        return None
+    out = {"day": day, "agent": agent, "model": model}
+    for k, _ in usage.TOKEN_FIELDS:
+        v = _num(r.get(k), 0, MAX_TOKENS)
+        out[k] = int(v) if v is not None else 0
+    c = _num(r.get("cost"), 0, MAX_COST)
+    out["cost"] = round(c, 6) if c is not None else 0.0
+    return out
+
+
+@app.post("/api/usage")
+async def usage_in(request: Request):
+    """Tokens and estimated spend per day, agent and model, from ccusage on the device. Numbers and model
+    names only. A day sent again replaces that device's earlier numbers for it."""
+    k = device(request)
+    body = await request.json()
+    rows = body.get("rows") if isinstance(body, dict) else None
+    if not isinstance(rows, list) or len(rows) > MAX_BATCH:
+        raise HTTPException(413, "send at most %d rows per request" % MAX_BATCH)
+    received, stored = now_iso(), 0
+    with db.transaction():
+        for r in filter(None, map(clean_usage_row, rows)):
+            db.execute("INSERT INTO usage (user_id, key_id, day, agent, model, input, output, cache_write, cache_read, "
+                       "cost, received_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                       "ON CONFLICT (key_id, day, agent, model) DO UPDATE SET input = excluded.input, "
+                       "output = excluded.output, cache_write = excluded.cache_write, "
+                       "cache_read = excluded.cache_read, cost = excluded.cost, received_at = excluded.received_at",
+                       (k["user_id"], k["id"], r["day"], r["agent"], r["model"], r["input"], r["output"],
+                        r["cache_write"], r["cache_read"], r["cost"], received))
+            stored += 1
+    _forget(k["user_id"])
+    return {"stored": stored}
+
+
 # ---------------------------------------------------------------- labelling with the shared key
 
 STATE_LIMITS = {"prompt": jev_judge.MAX_PROMPT, "ai_previous_reply_end": jev_judge.MAX_PREV,
@@ -633,6 +684,13 @@ def user_stats(u, history=False):
                 t["you_s"] += you
                 t["effort_s"] += you * effort.weight(r)
         out["imported"] = {f: round(v) for f, v in t.items()}
+        out["usage"] = [
+            {"day": r["day"], "agent": r["agent"], "model": r["model"], "input": int(r["input"]),
+             "output": int(r["output"]), "cache_write": int(r["cache_write"]), "cache_read": int(r["cache_read"]),
+             "cost": round(float(r["cost"]), 4)}
+            for r in db.query("SELECT day, agent, model, SUM(input) AS input, SUM(output) AS output, "
+                              "SUM(cache_write) AS cache_write, SUM(cache_read) AS cache_read, SUM(cost) AS cost "
+                              "FROM usage WHERE user_id = %s GROUP BY day, agent, model ORDER BY day", (u["id"],))]
     with _cache_lock:
         _cache[(u["id"], history)] = (key, out)
     return out
@@ -648,8 +706,12 @@ def visible_user(request, username):
 
 @app.get("/api/u/{username}")
 def api_user(username: str, request: Request):
-    u, _ = visible_user(request, username)
-    return JSONResponse(user_stats(u, history=True), headers={"Cache-Control": "no-store"})
+    u, me = visible_user(request, username)
+    out = user_stats(u, history=True)
+    if out.get("usage") and not (me and (me["id"] == u["id"] or is_admin(me))):
+        # what someone spends is theirs: others see models and tokens, not dollars
+        out = dict(out, usage=[{k: v for k, v in r.items() if k != "cost"} for r in out["usage"]])
+    return JSONResponse(out, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/u/{username}", response_class=HTMLResponse)
@@ -998,6 +1060,9 @@ PROFILE_HTML = r"""
 <div class="panel"><div class="phead"><h2>What the Prompts Were Doing</h2><span class="meta" id="kindMeta"></span></div>
 <p class="sub">Each prompt is labelled by Jev. Purple kinds count toward effort in full; grey ones count only as far as the prompt shows your own thinking.</p>
 <div class="kinds" id="kinds"></div></div></div>
+<div class="panel" id="usagePanel" hidden><div class="phead"><h2>Models</h2><span class="meta" id="usageMeta"></span></div>
+<p class="sub">Tokens per model across every coding agent on their computers, from <a class="link" href="https://github.com/ryoppippi/ccusage">ccusage</a>. Cost is ccusage's estimate at list price, not what a subscription charges.</p>
+<div class="table-scroll" id="usage"></div></div>
 <div class="panel"><div class="phead"><h2>Recent Sessions</h2><span class="meta" id="sessMeta"></span></div><div class="table-scroll" id="sessions"></div></div>
 <div class="privacy-line"><img src="/assets/icon-lock.svg" alt=""><span id="auditLine">Counts, timings and effort labels only. Never prompt text, code or AI output.</span></div>
 <script>
@@ -1081,6 +1146,28 @@ function kinds(k, judged, total) {
   $("#kindMeta").textContent = `${judged} of ${total} judged`;
   $("#kinds").innerHTML = rows.length ? rows.map(([name, n]) => `<div class="kind"><b>${esc(KIND[name] || name)}</b><div><div class="bar${COUNTS.has(name) ? "" : " dim"}" style="width:${(n / max * 100).toFixed(1)}%"></div></div><span>${n}</span></div>`).join("") : `<p class="empty">No prompts judged yet.</p>`;
 }
+const AGENT = { claude: "Claude Code", codex: "Codex", gemini: "Gemini CLI", opencode: "OpenCode", amp: "Amp" };
+const tok = (n) => n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n);
+const usd = (c) => c >= 100 ? `$${Math.round(c).toLocaleString()}` : `$${c.toFixed(2)}`;
+function usage(rows) {
+  const panel = $("#usagePanel");
+  panel.hidden = !rows.length;
+  if (!rows.length) return;
+  const from = range ? local(new Date(Date.now() - (range - 1) * 864e5)) : "";
+  const hasCost = rows.some((r) => "cost" in r), by = {};
+  for (const r of rows) {
+    if (r.day < from) continue;
+    const m = by[r.model] ||= { model: r.model, agents: new Set(), tokens: 0, output: 0, cost: 0 };
+    m.agents.add(AGENT[r.agent] || r.agent);
+    m.tokens += r.input + r.output + r.cache_write + r.cache_read; m.output += r.output; m.cost += r.cost || 0;
+  }
+  const ms = Object.values(by).sort((a, b) => b.tokens - a.tokens);
+  const total = ms.reduce((t, m) => t + m.cost, 0);
+  $("#usageMeta").textContent = `${LABEL[range]} · ${plural(ms.length, "model")}` + (hasCost && ms.length ? ` · ${usd(total)} est.` : "");
+  $("#usage").innerHTML = ms.length ? `<table class="stable"><thead><tr><th>Model</th><th>Tokens</th><th>Output</th>${hasCost ? "<th>Est. cost</th>" : ""}</tr></thead><tbody>` +
+    ms.map((m) => `<tr><td><div class="sname"><b>${esc(m.model)}</b><span>${esc([...m.agents].join(", "))}</span></div></td><td>${tok(m.tokens)}</td><td>${tok(m.output)}</td>${hasCost ? `<td>${usd(m.cost)}</td>` : ""}</tr>`).join("") +
+    `</tbody></table>` : `<p class="empty">No model usage ${LABEL[range].toLowerCase()}.</p>`;
+}
 function sessions(ss) {
   $("#sessMeta").textContent = ss.length ? `last ${ss.length}` : "";
   const when = (a) => new Date(a).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -1098,13 +1185,13 @@ async function load() {
   const r = await fetch(`/api/u/${user}`, { cache: "no-store" });
   if (!r.ok) return;
   stats = await r.json();
-  render(); heat(stats.days); projects(stats.projects); kinds(stats.kinds, stats.judged, stats.prompts); sessions(stats.sessions || []); live(stats);
+  render(); heat(stats.days); projects(stats.projects); kinds(stats.kinds, stats.judged, stats.prompts); sessions(stats.sessions || []); usage(stats.usage || []); live(stats);
   $("#auditLine").textContent = `Counts, timings and effort labels only, never prompt text or code. Effort is an unvalidated estimate. ${plural(stats.audit.devices, "device")}, ${plural(stats.audit.heads, "log checkpoint")} kept by the server, ${plural(stats.audit.breaks, "chain break")}.` +
     (stats.imported && stats.imported.prompts ? ` Includes ${plural(stats.imported.sessions, "session")} (${hm(stats.imported.effort_s)} effort) backfilled from Claude Code transcripts. Those aren't hash-chained and don't count on the leaderboard.` : "");
 }
 document.querySelectorAll("#rangeSeg button").forEach((b) => b.onclick = () => {
   document.querySelectorAll("#rangeSeg button").forEach((x) => x.classList.toggle("on", x === b));
-  range = Number(b.dataset.range); render();
+  range = Number(b.dataset.range); render(); usage(stats ? stats.usage || [] : []);
 });
 load(); setInterval(load, 15000);
 </script>

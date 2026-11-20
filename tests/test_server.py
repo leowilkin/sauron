@@ -215,6 +215,71 @@ class TestServer(unittest.TestCase):
         self.assertEqual(len(sent), 2)
         self.assertEqual(self.app.db.one("SELECT COUNT(*) AS n FROM imported_events")["n"], 6)
 
+    # ---- token usage from ccusage
+    def _usage(self, rows, key=None):
+        return self.c.post("/api/usage", json={"rows": rows}, headers={"Authorization": "Bearer " + (key or self.key)})
+
+    def test_usage_is_stored_per_device_and_cost_shown_only_to_its_owner(self):
+        today = datetime.date.today().isoformat()
+        row = {"day": today, "agent": "codex", "model": "gpt-test", "input": 100, "output": 20, "cache_write": 0,
+               "cache_read": 900, "cost": 0.5}
+        self.assertEqual(self._usage([row], key="nope").status_code, 401)
+        bad = [dict(row, model="<script>"), dict(row, day="2026-13-01"), dict(row, day="2999-01-01"), "x",
+               dict(row, agent="")]
+        r = self._usage([row] + bad + [dict(row, prompt="secret", input=-5, cost=float("1e99"))])
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["stored"], 2)  # the same day/agent/model twice: the second replaces the first
+        dump = json.dumps(self.app.db.query("SELECT * FROM usage"))
+        self.assertNotIn("secret", dump)
+        got = self.app.db.one("SELECT * FROM usage")
+        self.assertEqual((got["input"], got["cost"]), (0, self.app.MAX_COST))  # clamped, never negative
+        self._usage([row])  # resent: replaces, doesn't add
+        # a second device's numbers add up instead of overwriting
+        self.app.db.execute("INSERT INTO api_keys (user_id, key_hash, created_at) VALUES (%s, %s, %s)",
+                            (self.uid, self.app.key_hash("ait_second"), today))
+        self._usage([dict(row, input=50, cost=0.25)], key="ait_second")
+        self._as("ada")
+        u = self.c.get("/api/u/ada").json()["usage"]
+        self.assertEqual(len(u), 1)
+        self.assertEqual((u[0]["input"], u[0]["output"], u[0]["cost"]), (150, 40, 0.75))
+        self._as(None)  # anyone else sees models and tokens, not what was spent
+        u = self.c.get("/api/u/ada").json()["usage"]
+        self.assertEqual(u[0]["input"], 150)
+        self.assertNotIn("cost", u[0])
+        self.assertEqual(self._usage("nope").status_code, 413)
+
+    def test_client_runs_ccusage_hourly_and_sends_its_rows(self):
+        import sync
+        import jev_judge
+        os.makedirs(os.environ["AI_TRACKER_DIR"], exist_ok=True)
+        report = {"daily": [{"period": "2026-11-19", "agents": [
+            {"agent": "claude", "modelBreakdowns": [{"modelName": "claude-test", "inputTokens": 5, "outputTokens": 7,
+                                                     "cacheCreationTokens": 11, "cacheReadTokens": 13, "cost": 1.5}]},
+            {"agent": "codex", "modelBreakdowns": [{"modelName": "gpt-test", "inputTokens": 1, "outputTokens": 2,
+                                                    "cost": 0.1}, {"modelName": "bad name!", "inputTokens": 9}]}]}]}
+        fake = os.path.join(self.tmp, "fake_ccusage.py")
+        argv_log = os.path.join(self.tmp, "argv.json")
+        with open(fake, "w") as f:
+            f.write("import json, sys\nopen(%r, 'a').write(json.dumps(sys.argv[1:]) + '\\n')\n"
+                    "print(json.dumps(%r))\n" % (argv_log, report))
+        jev_judge._set_config(server="http://testserver", usage_command="%s %s" % (sys.executable, fake))
+        with open(os.path.join(os.environ["AI_TRACKER_DIR"], "server.key"), "w") as f:
+            f.write(self.key)
+        sent = []
+        def send(body):
+            sent.append(body)
+            return self._usage(body["rows"]).json()
+        self.assertEqual(sync.sync_usage(send=send, now=1000000.0), 2)  # "bad name!" is dropped
+        self.assertEqual({r["model"] for r in sent[0]["rows"]}, {"claude-test", "gpt-test"})
+        self.assertEqual(sync.sync_usage(send=send, now=1000000.0 + 60), -1)  # within the hour: not run again
+        self.assertEqual(sync.sync_usage(send=send, now=1000000.0 + 3700), 2)
+        runs = [json.loads(l) for l in open(argv_log)]
+        self.assertNotIn("--since", runs[0])  # the first run sends all history
+        self.assertIn("--since", runs[1])  # later ones only the last few days
+        self.assertEqual(self.app.db.one("SELECT COUNT(*) AS n FROM usage")["n"], 2)
+        jev_judge._set_config(usage=False)
+        self.assertEqual(sync.sync_usage(send=send, force=True), -1)
+
     def test_settings_needs_sign_in_and_csrf(self):
         r = self.c.get("/settings", follow_redirects=False)
         self.assertEqual(r.status_code, 302)

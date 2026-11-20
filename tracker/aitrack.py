@@ -1053,6 +1053,11 @@ def cmd_sync(args):
         return 1
     n = sync.sync()
     print("Sent %d new events." % n if n >= 0 else "Couldn't sync; see %s" % os.path.join(eventlog.data_dir(), "errors.log"))
+    import usage
+    if usage.command(sync.config()):
+        u = sync.sync_usage(force=True)
+        print("Sent token usage for %d agent/model days." % u if u >= 0 else
+              "Couldn't send token usage; see %s" % os.path.join(eventlog.data_dir(), "errors.log"))
     return 0 if n >= 0 else 1
 
 

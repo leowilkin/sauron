@@ -306,8 +306,49 @@ def sync(send=None, send_imported=None):
         lock.__exit__(None, None, None)
 
 
+def sync_usage(send=None, now=None, force=False):
+    """Tokens and spend per agent and model from ccusage, at most hourly (see usage.py). Separate from sync()
+    and its lock, since ccusage can take a while and live events shouldn't wait for it. Returns rows stored,
+    or -1 when skipped or failed."""
+    import usage
+    cfg, key = config(), server_key()
+    if not cfg.get("server") or not key or not usage.command(cfg) or not (force or usage.due(_state(), now)):
+        return -1
+    send = send or (lambda body: post(cfg["server"], key, body, "/api/usage"))
+    lock = eventlog._FileLock(_path("usage.lock"))
+    lock.__enter__()
+    try:
+        if not lock.locked:
+            return -1
+        st = _state()
+        try:
+            return usage.sync_usage(st, cfg, send, now, force)
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                raise
+            return -1  # a server from before usage was accepted: try again next hour
+        finally:
+            # also after a failure, so a broken ccusage waits an hour too. sync() may have saved its own
+            # progress meanwhile, so merge only the usage keys into the latest state.
+            with eventlog._FileLock(_path("sync.lock")) as sl:
+                if sl.locked:
+                    latest = _state()
+                    latest.update({k: v for k, v in st.items() if k.startswith("usage_")})
+                    _save_state(latest)
+    except (urllib.error.URLError, OSError, ValueError, subprocess.SubprocessError) as e:
+        try:
+            with open(_path("errors.log"), "a", encoding="utf-8") as f:
+                f.write("%s usage: %s\n" % (eventlog.now_iso(), str(e)[:200]))
+        except OSError:
+            pass
+        return -1
+    finally:
+        lock.__exit__(None, None, None)
+
+
 if __name__ == "__main__":
     if os.environ.get("AI_TRACKER_DISABLE") != "1":
         r = sync()
+        sync_usage()
         if len(sys.argv) > 1 and sys.argv[1] == "--verbose":
             print("synced %d new events" % r if r >= 0 else "not synced (see errors.log, or run sauron connect)")

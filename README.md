@@ -159,6 +159,21 @@ sauron import ./someones-export --out their.jsonl --utc-offset -5
 - The transcript format is internal to Claude Code and undocumented. The importer targets 2.1.3xx and skips records it doesn't recognize.
 - When the original paths don't exist on this machine, the project is the `cwd` folder name, because there's no `.git` to find.
 
+### Other agents: tokens and spend (ccusage)
+
+Sauron's hooks only see Claude Code. For tokens and spend across every coding agent you use (Claude Code, Codex, Gemini CLI, OpenCode, Amp and so on), install [ccusage](https://github.com/ryoppippi/ccusage), which already reads all of their local logs:
+
+```sh
+npm install -g ccusage
+sauron sync                      # sends it now; after that, at most once an hour in the background
+```
+
+- Once you're connected, sync runs `ccusage daily --json --by-agent` and sends one row per day, agent and model: input, output, cache-write and cache-read tokens, and ccusage's cost estimate. Never prompts, paths or project names. Hackatime heartbeats carry the model and token counts too.
+- The first run sends all the history ccusage can find. After that it resends the last 3 days, since today keeps growing.
+- Profiles get a **Models** panel. Only you and admins see the cost. Everyone else who can see your profile sees models and tokens. The cost is ccusage's estimate at list price, not what a subscription charges. None of it affects effort or the leaderboard.
+- Sauron never downloads ccusage itself. It runs `ccusage` from your `PATH`, or the command in `"usage_command"` in `~/.ai-tracker/config.json` (for example `"npx -y ccusage@20.0.51"`). Turn it off with `{"usage": false}`.
+- `python3 ~/sauron/tracker/usage.py` prints exactly what would be sent.
+
 | Metric | How it's computed |
 |---|---|
 | time | Credited time, split into **you** and **AI alone**. See [Time model](#time-model). |
@@ -343,6 +358,7 @@ The one exception is Jev. Effort can't be estimated without knowing what each pr
 | `aitrack serve` | Reads prompt text from `~/.claude/projects` to show it next to each prompt | Off. Pass `--prompt-text` (optionally with a folder) |
 | `aitrack export-site` | Writes a snapshot you may then publish | The Hackatime-level data above. Prompt text and typing replays only with `--prompt-text` / `--include-replays`. Hide names with `--hide-project-names` / `--hide-file-names` or your `~/.wakatime.cfg`. It prints what's in and what's out |
 | Jev labelling | **Sends each new prompt's text, your previous prompt, and the end of the AI's previous reply to the Sauron server, which asks TypeSafe's Jev** using one shared key. Only the returned label is kept, on your computer and on the server | **Required for effort.** Runs in the background after each turn once you've run `sauron connect`, for prompts sent from then on. Capped per person per day. Running Jev with your own key (`sauron jev --save-key`) also works, and then prompts go straight to TypeSafe |
+| ccusage usage | Tokens and estimated cost per day, agent and model, from `ccusage` | Only when `ccusage` is installed (or `"usage_command"` is set). Off with `{"usage": false}` |
 | `presence.py` | Samples idle seconds and the *category* of the front app (terminal, editor, browser…), never names or titles | Off. `{"presence": true}` in `~/.ai-tracker/config.json` |
 
 Nothing else leaves your machine.

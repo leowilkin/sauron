@@ -92,6 +92,23 @@ SCHEMA = [
         received_at TEXT NOT NULL,
         PRIMARY KEY (user_id, k)
     )""",
+    # Tokens and estimated spend per day, agent and model, from ccusage on the device (tracker/usage.py).
+    # Per device, so two computers' numbers add up instead of overwriting each other; resent days replace.
+    """CREATE TABLE IF NOT EXISTS usage (
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        key_id INTEGER NOT NULL REFERENCES api_keys(id),
+        day TEXT NOT NULL,
+        agent TEXT NOT NULL,
+        model TEXT NOT NULL,
+        input BIGINT NOT NULL DEFAULT 0,
+        output BIGINT NOT NULL DEFAULT 0,
+        cache_write BIGINT NOT NULL DEFAULT 0,
+        cache_read BIGINT NOT NULL DEFAULT 0,
+        cost DOUBLE PRECISION NOT NULL DEFAULT 0,
+        received_at TEXT NOT NULL,
+        PRIMARY KEY (key_id, day, agent, model)
+    )""",
+    "CREATE INDEX IF NOT EXISTS usage_user_day ON usage (user_id, day)",
     # Every head a device reported, as it arrived. A log rewritten later can't match these.
     """CREATE TABLE IF NOT EXISTS heads (
         id INTEGER PRIMARY KEY {auto},
