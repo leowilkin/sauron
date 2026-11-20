@@ -27,7 +27,7 @@ A Claude Code plugin logs every prompt → response cycle and every AI file edit
 
 Paste this into Claude Code (or any coding agent):
 
-> Set up ai-tracker for me by following https://github.com/2Mon/sauron/blob/main/SETUP.md. Ask me before installing anything or sending any of my data anywhere.
+> Set up Sauron for me by following https://github.com/2Mon/sauron/blob/main/SETUP.md. Ask me before installing anything or sending any of my data anywhere.
 
 The agent checks for Python, installs the plugin, verifies it's logging, imports your recent history, offers the optional Jev struggle estimate (asking first, since it sends prompt text), and shows you the dashboard. [SETUP.md](SETUP.md) is written for the agent, but it's readable by people too.
 
@@ -294,14 +294,14 @@ Stored: timestamps, session and prompt ids, project name, `cwd`, relative file p
 
 Never stored: prompt text, pasted text, file contents, diffs, model output and tool output. These are read from the hook's stdin only to be counted.
 
-**The rule: by default, ai-tracker shares nothing Hackatime doesn't already get.** Every Hackatime heartbeat carries:
+**The rule: by default, Sauron shares nothing Hackatime doesn't already get.** Every Hackatime heartbeat carries:
 - the project name and the file path
 - branch and language
 - line additions and deletions
 - editor, OS and machine name
 - AI fields: session, model, prompt *length*, AI line changes and token counts
 
-ai-tracker's default export carries the same kind of data:
+Sauron's default export carries the same kind of data:
 - project names and project-relative file paths
 - line counts
 - prompt and reply lengths
