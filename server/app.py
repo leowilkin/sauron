@@ -4,7 +4,7 @@
 Environment:
   PUBLIC_ORIGIN        e.g. https://ai-tracker.k.hackclub.dev (OAuth redirect is <origin>/auth/callback)
   HCA_CLIENT_ID/SECRET from auth.hackclub.com/developer/apps
-  SESSION_SECRET       random string that signs session cookies
+  SESSION_SECRET       optional; generated and kept in the database when unset
   DATABASE_URL         postgres://... (SQLite file when unset, for local runs)
 
 Privacy: the server accepts only counts-only, Hackatime-level fields (see EVENT_FIELDS and
@@ -52,8 +52,20 @@ HEX64 = re.compile(r"^[0-9a-f]{64}$")
 MAX_BATCH = 2000
 
 db = DB()
+
+
+def session_secret():
+    """SESSION_SECRET if set, else one generated on first start and kept in the database,
+    so sessions survive restarts without anyone handling a secret."""
+    if os.environ.get("SESSION_SECRET"):
+        return os.environ["SESSION_SECRET"]
+    db.execute("INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
+               ("session_secret", secrets.token_hex(32)))
+    return db.one("SELECT value FROM settings WHERE key = %s", ("session_secret",))["value"]
+
+
 app = FastAPI(title="ai-tracker", docs_url=None, redoc_url=None, openapi_url=None)
-app.add_middleware(SessionMiddleware, secret_key=os.environ.get("SESSION_SECRET") or secrets.token_hex(32),
+app.add_middleware(SessionMiddleware, secret_key=session_secret(),
                    same_site="lax", https_only=ORIGIN.startswith("https"), max_age=60 * 60 * 24 * 30)
 
 

@@ -58,6 +58,10 @@ SCHEMA = [
         repo_url TEXT,
         PRIMARY KEY (user_id, name)
     )""",
+    """CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    )""",
     # Every head a device reported, as it arrived. A log rewritten later can't match these.
     """CREATE TABLE IF NOT EXISTS heads (
         id INTEGER PRIMARY KEY {auto},
