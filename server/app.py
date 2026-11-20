@@ -24,7 +24,8 @@ import urllib.parse
 
 import httpx
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -113,8 +114,8 @@ def unique_username(base):
 def auth_start(request: Request):
     missing = [k for k in ("HCA_CLIENT_ID", "HCA_CLIENT_SECRET") if not os.environ.get(k)]
     if missing:
-        return page("Sign-in not set up", "<h1>Sign-in isn't set up yet</h1><p>The server is missing %s. "
-                    "Add it as a secret environment variable on the deployment, then try again.</p>"
+        return page("Sign-in Isn't Set Up", '<div class="panel"><p class="sub">The server is missing %s. Add it as a '
+                    'secret environment variable on the deployment, then try again.</p></div>'
                     % " and ".join("<code>%s</code>" % k for k in missing))
     state = secrets.token_urlsafe(24)
     request.session["oauth_state"] = state
@@ -175,36 +176,40 @@ def settings(request: Request):
                     "WHERE user_id = %s AND revoked_at IS NULL ORDER BY id", (u["id"],))
     t = csrf(request)
     rows = "".join(
-        "<tr><td>%s</td><td>%s</td><td>%s</td><td>%d events</td><td><form method=post action='/settings/keys/%d/revoke'>"
-        "<input type=hidden name=csrf_token value='%s'><button class=link>Revoke</button></form></td></tr>"
-        % (esc(k["label"] or "device"), esc((k["created_at"] or "")[:10]), esc((k["last_used_at"] or "never")[:16]),
-           k["last_n"], k["id"], t) for k in keys) or "<tr><td colspan=5 class=muted>No devices yet.</td></tr>"
+        """<tr><td><div class="sname"><b>%s</b><span>added %s</span></div></td><td class="quiet">%s</td>
+<td class="quiet">%s events</td><td style="text-align:right"><form method="post" action="/settings/keys/%d/revoke">
+<input type="hidden" name="csrf_token" value="%s"><button class="plain danger">Revoke</button></form></td></tr>"""
+        % (esc(k["label"] or "Unnamed device"), esc(day_label(k["created_at"])),
+           esc("synced " + ago(k["last_used_at"]) if k["last_used_at"] else "never synced"), "{:,}".format(k["last_n"]),
+           k["id"], t) for k in keys)
     shown = ""
     if new_key:
-        shown = """<div class="card good"><h3>Your new device key</h3>
-<p>Copy it now: it's shown only once. On the computer you code on, run this and paste the key at the hidden prompt:</p>
-<pre>python3 ~/ai-tracker/tracker/aitrack.py connect %s</pre>
-<p><code class=key>%s</code></p></div>""" % (esc(ORIGIN), esc(new_key))
-    body = """
-<h1>Settings</h1>
+        shown = """<div class="panel keypanel"><div class="phead"><h2>Finish connecting this device</h2>
+<span class="meta">The key is shown once</span></div>
+<p class="sub">Run this on the computer you code on, then paste the key at the hidden prompt.</p>
+<pre class="cmd">python3 ~/ai-tracker/tracker/aitrack.py connect %s</pre>
+<div class="keyrow"><code id="key">%s</code><button class="glass" type="button" onclick="navigator.clipboard.writeText(document.getElementById('key').textContent);this.textContent='Copied'">Copy</button></div></div>""" % (esc(ORIGIN), esc(new_key))
+    device_table = ("""<div class="table-scroll"><table class="stable"><thead><tr><th>Device</th><th>Last sync</th><th>Sent</th><th></th></tr></thead>
+<tbody>%s</tbody></table></div>""" % rows) if keys else \
+        '<p class="empty">No devices yet. Add one, then run the command it shows on that computer.</p>'
+    body = """%s
+<div class="panel"><div class="phead"><h2>Devices</h2><span class="meta">%s</span></div>
 %s
-<div class="card"><h3>Profile</h3>
-<form method=post action="/settings/profile" class=row>
-<input type=hidden name=csrf_token value="%s">
-<label>Username <input name=username value="%s" pattern="[a-z0-9-]{2,30}" required></label>
-<label><input type=checkbox name=public value=1 %s> Public profile</label>
-<button>Save</button></form>
-<p class=muted>Profiles are public by default: hours, estimated effort and project names. Never prompt text.
-<a href="/u/%s">View your profile</a></p></div>
-<div class="card"><h3>Devices</h3>
-<table><tr><th>Device</th><th>Added</th><th>Last sync</th><th>Synced</th><th></th></tr>%s</table>
-<form method=post action="/settings/keys" class=row>
-<input type=hidden name=csrf_token value="%s">
-<input name=label placeholder="Device name, e.g. school laptop" maxlength=60>
-<button>Add a device</button></form></div>
-<form method=post action="/logout"><input type=hidden name=csrf_token value="%s"><button class=link>Sign out</button></form>
-""" % (shown, t, esc(u["username"]), "checked" if u["public"] else "", esc(u["username"]), rows, t, t)
-    return page("Settings", body, u)
+<form method="post" action="/settings/keys" class="inline-form">
+<input type="hidden" name="csrf_token" value="%s">
+<input name="label" placeholder="Device name, like school laptop" maxlength="60" aria-label="Device name">
+<button class="btn">Add Device</button></form></div>
+<div class="panel"><div class="phead"><h2>Profile</h2></div>
+<form method="post" action="/settings/profile" class="fields">
+<input type="hidden" name="csrf_token" value="%s">
+<label>Username<input name="username" value="%s" pattern="[a-z0-9-]{2,30}" required></label>
+<label class="check-row"><input type="checkbox" name="public" value="1" %s><span>Show my profile to everyone who can open this site</span></label>
+<div><button class="btn">Save</button></div></form></div>
+<div class="privacy-line"><img src="/assets/icon-lock.svg" alt=""><span>Devices send counts, timings, project names and effort labels. Never prompt text, code or AI output.</span>
+<form method="post" action="/logout"><input type="hidden" name="csrf_token" value="%s"><button class="plain">Sign Out</button></form></div>
+""" % (shown, "%d connected" % len(keys) if keys else "none yet", device_table, t, t, esc(u["username"]),
+       "checked" if u["public"] else "", t)
+    return page("Devices & Settings", body, me=u, active="settings", sub="Connect computers and choose who sees your profile")
 
 
 @app.post("/settings/keys")
@@ -353,7 +358,7 @@ def user_stats(u):
     repos = {r["name"]: r["repo_url"] for r in db.query("SELECT name, repo_url FROM projects WHERE user_id = %s",
                                                         (u["id"],))}
     today = datetime.date.today()
-    week0, d30 = (today - datetime.timedelta(days=6)).isoformat(), (today - datetime.timedelta(days=29)).isoformat()
+    week0 = (today - datetime.timedelta(days=6)).isoformat()
 
     def tot(pred):
         t = {"you_s": 0.0, "ai_s": 0.0, "effort_s": 0.0, "prompts": 0}
@@ -366,10 +371,9 @@ def user_stats(u):
 
     days = {}
     for (day, proj), v in per.items():
-        if day >= d30:
-            d = days.setdefault(day, {"day": day, "you_s": 0.0, "ai_s": 0.0, "effort_s": 0.0})
-            for f in ("you_s", "ai_s", "effort_s"):
-                d[f] += v[f]
+        d = days.setdefault(day, {"day": day, "you_s": 0.0, "ai_s": 0.0, "effort_s": 0.0})
+        for f in ("you_s", "ai_s", "effort_s"):
+            d[f] += v[f]
     projects = {}
     for (day, proj), v in per.items():
         p = projects.setdefault(proj, {"name": proj, "repo_url": repos.get(proj), "you_s": 0.0, "ai_s": 0.0,
@@ -377,6 +381,23 @@ def user_stats(u):
         for f in ("you_s", "ai_s", "effort_s", "prompts"):
             p[f] += v[f]
         p["last_day"] = max(p["last_day"], day)
+    alloc = effort.allocate(rows)
+    sess = {}
+    for r in rows:
+        k = r.get("session") or "?"
+        you, ai = alloc.get(id(r), (0.0, 0.0))
+        x = sess.setdefault(k, {"start": r["at"], "end": r["at"], "project": r.get("project") or "?", "prompts": 0,
+                                "you_s": 0.0, "ai_s": 0.0, "effort_s": 0.0, "judged": 0, "_p": {}})
+        x["_p"][r.get("project") or "?"] = x["_p"].get(r.get("project") or "?", 0) + 1
+        x["start"], x["end"] = min(x["start"], r["at"]), max(x["end"], r["at"])
+        x["prompts"] += 1
+        x["you_s"] += you
+        x["ai_s"] += ai
+        x["effort_s"] += you * effort.weight(r)
+        x["judged"] += 1 if r.get("pattern") else 0
+    for x in sess.values():
+        x["project"] = max(x.pop("_p").items(), key=lambda kv: kv[1])[0]
+    recent = sorted(sess.values(), key=lambda x: x["end"], reverse=True)[:12]
     kinds = {}
     for r in rows:
         if r.get("pattern"):
@@ -396,6 +417,7 @@ def user_stats(u):
         "projects": sorted(({f: (round(v) if isinstance(v, float) else v) for f, v in p.items()}
                             for p in projects.values()), key=lambda p: -p["effort_s"]),
         "kinds": kinds,
+        "sessions": [{f: (round(v) if isinstance(v, float) else v) for f, v in x.items()} for x in recent],
         "judged": sum(1 for r in rows if r.get("pattern")), "prompts": len(rows),
         "audit": {"devices": len(devices), "heads": sum(d["heads"] for d in devices),
                   "breaks": sum(d["breaks"] for d in devices)},
@@ -422,10 +444,12 @@ def api_user(username: str, request: Request):
 @app.get("/u/{username}", response_class=HTMLResponse)
 def profile(username: str, request: Request):
     u, me = visible_user(request, username)
-    body = PROFILE_HTML.replace("__USER__", esc(u["username"])).replace("__NAME__", esc(u["name"] or u["username"]))
+    mine = bool(me and me["id"] == u["id"])
+    body = PROFILE_HTML.replace("__USER__", esc(u["username"]))
     if not u["public"]:
-        body = "<p class=muted>Only you can see this profile. Make it public in <a href=/settings>settings</a>.</p>" + body
-    return page(u["name"] or u["username"], body, me)
+        body = '<p class="notice">Only you can see this profile. <a class="link" href="/settings">Change this in Settings</a></p>' + body
+    return page(u["name"] or u["username"], body, me=me, active="me" if mine else "", sub="@" + u["username"],
+                toolbar=RANGE_SEG, status_user=u)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -435,27 +459,30 @@ def home(request: Request):
     active = db.query("SELECT DISTINCT u.id FROM users u JOIN events e ON e.user_id = u.id "
                       "WHERE u.public = 1 AND e.ts >= %s", (since,))
     board = []
-    for a in active[:200]:
-        u = db.one("SELECT * FROM users WHERE id = %s", (a["id"],))
-        s = user_stats(u)
-        board.append((s["week"]["effort_s"], s["week"]["observed_s"], u, s["live"]))
-    board.sort(key=lambda b: -b[0])
-    rows = "".join("<tr><td>%s<a href='/u/%s'>%s</a></td><td>%s</td><td>%s</td></tr>"
-                   % ("<span class=live title='coding now'></span>" if live else "", esc(u["username"]),
-                      esc(u["name"] or u["username"]), hm(e), hm(o))
-                   for e, o, u, live in board[:25]) or "<tr><td colspan=3 class=muted>Nobody yet this week.</td></tr>"
-    cta = ("<a class=button href='/u/%s'>Your profile</a>" % esc(me["username"])) if me else \
-        "<a class=button href='/auth/start'>Sign in with Hack Club</a>"
-    body = """
-<section class=hero><h1>ai-tracker</h1>
-<p>Passive time tracking for building with AI. It counts the hours you put in, not just the hours the AI worked,
-and estimates how much of that was real effort: reading, thinking, directing, learning.</p>
-<p>%s <a class=link href="%s">Source (AGPLv3)</a></p></section>
-<div class=card><h3>This week</h3><table><tr><th>Who</th><th>Estimated effort</th><th>Observed</th></tr>%s</table></div>
-<div class=card><h3>Privacy</h3><p>Synced: the same kind of data Hackatime heartbeats carry (project, file path,
-line counts, prompt length, timings) plus each prompt's effort label. Never prompt text, code or AI output.</p></div>
-""" % (cta, REPO_URL, rows)
-    return page("ai-tracker", body, me)
+    for a_ in active[:200]:
+        u = db.one("SELECT * FROM users WHERE id = %s", (a_["id"],))
+        st = user_stats(u)
+        board.append((st["week"]["effort_s"], st, u))
+    board.sort(key=lambda b_: -b_[0])
+    rows = "".join(
+        """<tr onclick="location.href='/u/%s'"><td class="quiet rank">%d</td><td><div class="sname"><b>%s%s</b><span>@%s</span></div></td>
+<td class="eff">%s</td><td>%s</td><td class="proj">%s</td></tr>"""
+        % (esc(u["username"]), i + 1, '<img class="livedot" src="/assets/dot-live.svg" alt="coding now"> ' if st["live"] else "",
+           esc(u["name"] or u["username"]), esc(u["username"]), hm(e), hm(st["week"]["observed_s"]),
+           esc(st["projects"][0]["name"] if st["projects"] else ""))
+        for i, (e, st, u) in enumerate(board[:50]))
+    table = ("""<div class="table-scroll"><table class="stable"><thead><tr><th></th><th>Builder</th>
+<th><img src="/assets/dot6-effort.svg" alt="">Effort</th><th><img src="/assets/dot6-observed.svg" alt="">Observed</th>
+<th>Top project</th></tr></thead><tbody>%s</tbody></table></div>""" % rows) if board else \
+        '<p class="empty">Nobody has synced this week yet.</p>'
+    intro = "" if me else """<div class="panel intro"><h2>Time you put in, not time the AI ran</h2>
+<p class="sub">ai-tracker runs quietly next to Claude Code. It counts your reading, thinking and typing between prompts,
+leaves out the minutes the agent worked alone, and estimates how much of your time was real effort.</p>
+<a class="btn" href="/auth/start">Sign In with Hack Club</a></div>"""
+    body = intro + """<div class="panel"><div class="phead"><h2>This Week</h2><span class="meta">%s</span></div>%s</div>
+<div class="privacy-line"><img src="/assets/icon-lock.svg" alt=""><span>Synced: counts, timings, project names and effort labels. Never prompt text, code or AI output.</span><a href="%s">Source Code</a></div>""" % (
+        "%d builder%s" % (len(board), "" if len(board) == 1 else "s"), table, REPO_URL)
+    return page("This Week", body, me=me, active="week", sub="Ranked by estimated effort")
 
 
 @app.get("/healthz")
@@ -465,6 +492,77 @@ def healthz():
 
 
 # ---------------------------------------------------------------- html
+# Pages use the local dashboard's own stylesheet and icons (the "Sauron · Liquid glass" Figma design),
+# so the site and the dashboard can't drift apart. SITE_CSS only adds what the site needs on top.
+
+ASSETS = os.path.join(os.path.dirname(HERE), "tracker", "assets")
+
+
+def _dashboard_css():
+    with open(os.path.join(os.path.dirname(HERE), "tracker", "dashboard.html"), encoding="utf-8") as f:
+        page_src = f.read()
+    css = page_src.split("<style>", 1)[1].split("</style>", 1)[0]
+    return css.replace("url(assets/", "url(/assets/").replace('"assets/', '"/assets/')
+
+
+SITE_CSS = """
+.window { min-height: min(760px, calc(100vh - 96px)); }
+.brand { display: flex; align-items: center; gap: 8px; margin: 0 8px 14px; font-size: 13px; font-weight: 700; color: var(--t1); text-decoration: none; }
+.brand img { width: 52px; height: 12px; }
+.me { display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: 10px; background: rgba(255, 255, 255, 0.45); text-decoration: none; color: var(--t1); }
+.me .av { width: 26px; height: 26px; border-radius: 13px; background: var(--effort); color: #fff; display: grid; place-items: center; font-size: 12px; font-weight: 700; flex: none; }
+.me b { font-size: 12px; font-weight: 590; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.me span { font-size: 11px; color: var(--t3); display: block; }
+.toolbar .btn { margin-left: 4px; }
+.stable td.rank { width: 28px; }
+.stable .eff { color: var(--effort); }
+.livedot { width: 8px; height: 8px; vertical-align: 0; }
+.notice { margin: 0; font-size: 12px; color: var(--t2); background: rgba(255, 141, 40, 0.12); border-radius: 10px; padding: 10px 12px; }
+.intro h2 { font-size: 20px !important; font-weight: 700 !important; letter-spacing: -0.2px; }
+.intro .sub { font-size: 13px; line-height: 19px; max-width: 62ch; }
+.plain { font: 510 12px var(--font); color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; }
+.plain.danger { color: var(--danger); }
+.privacy-line form { margin-left: auto; }
+.inline-form { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.inline-form input, .fields input:not([type=checkbox]) {
+  font: 13px var(--font); color: var(--t1); background: #fff; border: 0.5px solid rgba(0, 0, 0, 0.14); border-radius: 8px;
+  padding: 0 10px; height: 32px; min-width: 0; flex: 1 1 220px; max-width: 360px;
+}
+.fields { display: flex; flex-direction: column; gap: 12px; }
+.fields label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; font-weight: 590; color: var(--t4); }
+.fields .check-row { flex-direction: row; align-items: center; gap: 8px; font-size: 13px; font-weight: 400; color: var(--t1); }
+.keypanel { background: rgba(52, 199, 89, 0.1); }
+.cmd, .keyrow code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: #fff; border-radius: 8px; padding: 9px 12px; margin: 0; overflow-x: auto; display: block; }
+.keyrow { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.keyrow code { flex: 1; min-width: 0; word-break: break-all; }
+.keyrow .glass { padding: 0 14px; }
+.heat { overflow-x: auto; }
+.heat svg { min-width: 640px; }
+.heat rect.d { rx: 2.5px; }
+.heat-foot { display: flex; align-items: center; gap: 6px; justify-content: flex-end; font-size: 11px; color: var(--t3); margin-top: 6px; }
+.heat-foot i { width: 10px; height: 10px; border-radius: 2.5px; display: inline-block; }
+.kinds { display: flex; flex-direction: column; gap: 6px; }
+.kind { display: grid; grid-template-columns: 170px 1fr 36px; gap: 10px; align-items: center; font-size: 12px; }
+.kind .bar { height: 8px; border-radius: 4px; background: var(--effort); min-width: 2px; }
+.kind .bar.dim { background: var(--gray); opacity: 0.45; }
+.kind b { font-weight: 510; }
+.kind span { text-align: right; color: var(--t3); font-variant-numeric: tabular-nums; }
+@media (max-width: 860px) { .kind { grid-template-columns: 120px 1fr 30px; } .me { display: none; } }
+"""
+
+APP_CSS = _dashboard_css() + SITE_CSS
+
+RANGE_SEG = """<div class="glass seg" id="rangeSeg" role="group" aria-label="Time range">
+<button data-range="7" class="on">Week</button><button data-range="30">Month</button><button data-range="365">Year</button><button data-range="0">All</button></div>"""
+
+
+@app.get("/assets/app.css")
+def app_css():
+    return Response(APP_CSS, media_type="text/css", headers={"Cache-Control": "public, max-age=300"})
+
+
+app.mount("/assets", StaticFiles(directory=ASSETS), name="assets")
+
 
 def esc(s):
     return html.escape(str(s if s is not None else ""), quote=True)
@@ -472,89 +570,176 @@ def esc(s):
 
 def hm(s):
     s = int(s or 0)
+    if s < 60:
+        return "0m" if s <= 0 else "<1m"
     return "%dh %02dm" % (s // 3600, s % 3600 // 60) if s >= 3600 else "%dm" % (s // 60)
 
 
-def page(title, body, me=None):
-    nav = ("<a href='/u/%s'>%s</a> · <a href='/settings'>Settings</a>" % (esc(me["username"]), esc(me["username"]))
-           if me else "<a href='/auth/start'>Sign in</a>")
-    return HTMLResponse("""<!doctype html><html lang=en><head><meta charset=utf-8>
-<meta name=viewport content="width=device-width,initial-scale=1"><title>%s · ai-tracker</title><style>%s</style></head>
-<body><header><a href="/" class=brand>ai-tracker</a><nav>%s</nav></header><main>%s</main>
-<footer>AGPLv3 · <a href="%s">source</a></footer></body></html>""" % (esc(title), CSS, nav, body, REPO_URL))
+def day_label(iso):
+    try:
+        return datetime.date.fromisoformat((iso or "")[:10]).strftime("%b %-d")
+    except ValueError:
+        return ""
 
 
-CSS = """
-:root{--bg:#f5f5f7;--card:#fff;--text:#1d1d1f;--muted:#6e6e73;--line:#e5e5ea;--effort:#cb30e0;--you:#0088ff;--ai:#8e8e93;--good:#e9f9ee}
-@media (prefers-color-scheme:dark){:root{--bg:#000;--card:#1c1c1e;--text:#f5f5f7;--muted:#98989d;--line:#38383a;--good:#0f2a17}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
-header{display:flex;justify-content:space-between;align-items:center;padding:14px 20px;max-width:980px;margin:auto}
-.brand{font-weight:700;color:var(--text);text-decoration:none}main{max-width:980px;margin:auto;padding:0 16px 40px}
-a{color:var(--you)}.muted{color:var(--muted)}footer{text-align:center;color:var(--muted);padding:20px;font-size:13px}
-.card{background:var(--card);border-radius:14px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.06)}
-.card.good{background:var(--good)}h1{font-size:30px;margin:10px 0}h3{margin:0 0 8px}
-table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:7px 6px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
-th{color:var(--muted);font-weight:500;font-size:13px}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0}
-input{font:inherit;padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--text)}
-button,.button{font:inherit;background:var(--you);color:#fff;border:0;border-radius:9px;padding:7px 14px;cursor:pointer;text-decoration:none;display:inline-block}
-button.link{background:none;color:var(--you);padding:0}pre,code.key{background:var(--bg);padding:8px 10px;border-radius:8px;overflow-x:auto;display:block;word-break:break-all}
-.hero p{max-width:640px}.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(170px,100%),1fr));gap:12px}
-.tile .v{font-size:26px;font-weight:650}.tile .l{color:var(--muted);font-size:13px}
-.live{display:inline-block;width:8px;height:8px;border-radius:50%;background:#30d158;margin-right:6px;box-shadow:0 0 0 3px rgba(48,209,88,.25)}
-.legend span{margin-right:14px;font-size:13px;color:var(--muted)}.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
-svg text{fill:var(--muted);font-size:10px}
-"""
+def ago(iso):
+    try:
+        t = aitrack.parse_ts(iso)
+    except (TypeError, ValueError):
+        return ""
+    s = (datetime.datetime.now(datetime.timezone.utc) - t).total_seconds()
+    if s < 90:
+        return "just now"
+    if s < 3600:
+        return "%d min ago" % (s // 60)
+    if s < 86400:
+        return "%d h ago" % (s // 3600)
+    return day_label(iso)
 
-PROFILE_HTML = """
-<h1 id=title><span id=live></span>__NAME__</h1>
-<p class=muted>@__USER__ · <span id=last></span></p>
-<div class=tiles>
- <div class="card tile"><div class=l>Estimated effort, 7 days</div><div class=v id=weekEffort>–</div></div>
- <div class="card tile"><div class=l>Observed, 7 days</div><div class=v id=weekObs>–</div></div>
- <div class="card tile"><div class=l>Today</div><div class=v id=today>–</div></div>
- <div class="card tile"><div class=l>All-time effort</div><div class=v id=allEffort>–</div></div>
-</div>
-<div class=card><h3>Last 30 days</h3><div id=chart></div>
-<div class=legend><span><i style="background:var(--effort)"></i>Estimated effort</span><span><i style="background:var(--you)"></i>Your other time</span><span><i style="background:var(--ai)"></i>AI working alone</span></div></div>
-<div class=card><h3>Projects</h3><table id=projects></table></div>
-<div class=card><h3>How it's counted</h3><p class=muted id=how></p></div>
+
+def page(title, body, me=None, active="", sub="", toolbar="", status_user=None):
+    def nav(key, href, icon, label):
+        return '<a href="%s" class="%s"><img src="/assets/%s" alt="">%s</a>' % (href, "on" if key == active else "", icon, label)
+    links = nav("week", "/", "icon-chart.svg", "This Week")
+    if me:
+        links += '<div class="section">You</div>' + nav("me", "/u/" + esc(me["username"]), "icon-person.svg", "Profile") + \
+            nav("settings", "/settings", "icon-doc.svg", "Devices &amp; Settings")
+    links += '<div class="section">About</div>' + \
+        '<a href="%s"><img src="/assets/icon-git.svg" alt="">Source Code</a>' % REPO_URL
+    foot = ('<a class="me" href="/u/%s"><span class="av">%s</span><div><b>%s</b><span>@%s</span></div></a>'
+            % (esc(me["username"]), esc((me["name"] or me["username"])[:1].upper()), esc(me["name"] or me["username"]),
+               esc(me["username"]))) if me else '<a class="btn" href="/auth/start" style="justify-content:center">Sign In</a>'
+    status = ""
+    if status_user is not None:
+        status = '<div class="status idle" id="liveStatus"><img src="/assets/dot-live.svg" alt=""><div><b id="liveTitle">Checking…</b><span id="liveSub"></span></div></div>'
+    return HTMLResponse("""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>%s · ai-tracker</title>
+<link rel="stylesheet" href="/assets/app.css"></head><body><div class="desk"><div class="window">
+<aside class="sidebar"><a class="brand" href="/"><img src="/assets/window-controls.svg" alt="">ai-tracker</a>
+<nav class="nav" aria-label="Sections">%s</nav><div class="side-spacer"></div>%s%s</aside>
+<div class="content"><div class="toolbar"><div class="title"><b>%s</b><span>%s</span></div>%s</div>
+<div class="scroll">%s</div></div></div></div><div id="tip"></div></body></html>""" % (
+        esc(title), links, status, foot, esc(title), esc(sub), toolbar, body))
+
+
+PROFILE_HTML = r"""
+<div class="measures" id="measures"></div>
+<div class="panel" id="whereTime"></div>
+<div class="panel"><div class="phead"><h2>Effort This Year</h2><span class="meta" id="heatMeta"></span></div>
+<div class="heat" id="heat"></div>
+<div class="heat-foot">Less <i style="background:rgba(0,0,0,0.05)"></i><i style="background:rgba(203,48,224,0.25)"></i><i style="background:rgba(203,48,224,0.45)"></i><i style="background:rgba(203,48,224,0.7)"></i><i style="background:#cb30e0"></i> More</div></div>
+<div class="grid2">
+<div class="panel"><div class="phead"><h2>Projects</h2><span class="meta" id="projMeta"></span></div><div class="table-scroll" id="projects"></div></div>
+<div class="panel"><div class="phead"><h2>What the Prompts Were Doing</h2><span class="meta" id="kindMeta"></span></div>
+<p class="sub">Each prompt is labelled by Jev. Purple kinds count toward effort in full; grey ones count only as far as the prompt shows your own thinking.</p>
+<div class="kinds" id="kinds"></div></div></div>
+<div class="panel"><div class="phead"><h2>Recent Sessions</h2><span class="meta" id="sessMeta"></span></div><div class="table-scroll" id="sessions"></div></div>
+<div class="privacy-line"><img src="/assets/icon-lock.svg" alt=""><span id="auditLine">Counts, timings and effort labels only. Never prompt text, code or AI output.</span></div>
 <script>
 const user = "__USER__";
-const hm = (s) => { s = Math.round(s || 0); return s >= 3600 ? `${Math.floor(s / 3600)}h ${String(Math.floor(s % 3600 / 60)).padStart(2, "0")}m` : `${Math.floor(s / 60)}m`; };
+const $ = (q) => document.querySelector(q);
+const hm = (s) => { s = Math.round(s || 0); if (s < 60) return s <= 0 ? "0m" : "<1m"; return s >= 3600 ? `${Math.floor(s / 3600)}h ${String(Math.floor(s % 3600 / 60)).padStart(2, "0")}m` : `${Math.floor(s / 60)}m`; };
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-function chart(days) {
-  const W = 900, H = 160, n = 30, bw = W / n;
-  const by = Object.fromEntries(days.map((d) => [d.day, d]));
-  const max = Math.max(3600, ...days.map((d) => d.you_s + d.ai_s));
-  let g = "";
-  for (let i = 0; i < n; i++) {
-    const day = new Date(Date.now() - (n - 1 - i) * 864e5).toISOString().slice(0, 10), d = by[day];
-    if (d) {
-      let y = H - 16;
-      for (const [v, c] of [[d.effort_s, "var(--effort)"], [d.you_s - d.effort_s, "var(--you)"], [d.ai_s, "var(--ai)"]]) {
-        const h = Math.max(0, v) / max * (H - 24); y -= h;
-        if (h > 0) g += `<rect x="${i * bw + 2}" y="${y}" width="${bw - 4}" height="${h}" rx="2" fill="${c}"><title>${day}: ${hm(v)}</title></rect>`;
-      }
-    }
-    if (i % 5 === 0) g += `<text x="${i * bw + 2}" y="${H - 3}">${day.slice(5)}</text>`;
+const COUNTS = new Set(["concept", "understand_ai_work", "code_and_explain", "review_pushback"]);
+const KIND = { concept: "Asking how things work", understand_ai_work: "Understanding the AI's work", code_and_explain: "Code with an explanation",
+  review_pushback: "Pushing back on the AI", direct: "Directing with a plan", delegate: "Handing off a task", debug_handoff: "Passing an error along",
+  approve: "Approving", ask_info: "Asking for information", other: "Other" };
+const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+function dayName(iso) {
+  const d = new Date(iso.length <= 10 ? iso + "T12:00:00" : iso), t = new Date();
+  const k = (x) => x.toDateString(), y = new Date(t); y.setDate(t.getDate() - 1);
+  if (k(d) === k(t)) return "Today";
+  if (k(d) === k(y)) return "Yesterday";
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+function spanText(a, b) {
+  const m = Math.max(1, Math.round((Date.parse(b) - Date.parse(a)) / 6e4));
+  if (m < 90) return `${m} min`;
+  if (m < 24 * 60) return `${Math.round(m / 60)} h`;
+  return `${dayName(a)} – ${dayName(b)}`;
+}
+const local = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10);
+let stats = null, range = 7;
+function sumRange(days) {
+  const from = range ? local(new Date(Date.now() - (range - 1) * 864e5)) : "";
+  const t = { you_s: 0, ai_s: 0, effort_s: 0 };
+  for (const d of days) if (d.day >= from) { t.you_s += d.you_s; t.ai_s += d.ai_s; t.effort_s += d.effort_s; }
+  return t;
+}
+const LABEL = { 7: "This Week", 30: "This Month", 365: "This Year", 0: "All Time" };
+function measure(dot, label, value, text, tag) {
+  return `<div class="measure"><div class="mhead"><span class="dotlabel"><img src="/assets/${dot}" alt="">${label}</span>${tag || ""}</div><div class="big">${value}</div><p>${text}</p></div>`;
+}
+function render() {
+  const s = stats; if (!s) return;
+  const t = sumRange(s.days), obs = t.you_s + t.ai_s;
+  $("#measures").innerHTML =
+    measure("dot-effort.svg", "Estimated Effort", hm(t.effort_s), "Time spent learning, steering and reasoning, weighted by what each prompt was doing.", '<span class="tag effort">Estimate</span>') +
+    measure("dot-submitted.svg", "Your Time", hm(t.you_s), "Reading, thinking and typing between prompts. The agent's own time is left out.") +
+    measure("dot-observed.svg", "Observed Activity", hm(obs), "Your time plus the minutes the agent ran on its own. Each moment counts once.");
+  const other = Math.max(0, t.you_s - t.effort_s);
+  const segs = [[t.effort_s, "var(--effort)", "Estimated effort"], [other, "rgba(203,48,224,0.32)", "Your other time"], [t.ai_s, "rgba(0,195,208,0.45)", "Agent ran without you"]].filter((x) => x[0] > 0);
+  $("#whereTime").innerHTML = `<div class="phead"><h2>Where the Time Went</h2><span class="meta">${LABEL[range]} · ${hm(obs)} observed</span></div>` +
+    (segs.length ? `<div class="stack">${segs.map(([v, c, l]) => `<div style="flex:${v} 1 0;background:${c}" title="${esc(l)} ${hm(v)}"></div>`).join("")}</div>
+    <div class="stack-labels">${segs.map(([v, , l]) => `<div style="flex:${v} 1 0"><b>${hm(v)}</b><span>${esc(l)}</span></div>`).join("")}</div>` : `<p class="empty">Nothing tracked ${LABEL[range].toLowerCase()} yet.</p>`);
+}
+function heat(days) {
+  const by = Object.fromEntries(days.map((d) => [d.day, d.effort_s]));
+  const today = new Date(); today.setHours(12, 0, 0, 0);
+  const start = new Date(today); start.setDate(start.getDate() - 364 - start.getDay());
+  const max = Math.max(1800, ...days.map((d) => d.effort_s));
+  const C = 11, G = 3, X = 26, Y = 16;
+  let g = "", total = 0, active = 0, streak = 0, best = 0, run = 0, lastMonth = -1;
+  for (let i = 0, d = new Date(start); d <= today; i++, d.setDate(d.getDate() + 1)) {
+    const key = local(d), v = by[key] || 0, col = Math.floor(i / 7), row = d.getDay();
+    total += v; if (v > 0) { active++; run++; best = Math.max(best, run); } else run = 0;
+    const lvl = v <= 0 ? 0 : v < max * 0.15 ? 1 : v < max * 0.4 ? 2 : v < max * 0.7 ? 3 : 4;
+    const fill = ["rgba(0,0,0,0.05)", "rgba(203,48,224,0.25)", "rgba(203,48,224,0.45)", "rgba(203,48,224,0.7)", "#cb30e0"][lvl];
+    g += `<rect class="d" x="${X + col * (C + G)}" y="${Y + row * (C + G)}" width="${C}" height="${C}" fill="${fill}"><title>${key}: ${v ? hm(v) + " effort" : "no effort tracked"}</title></rect>`;
+    if (row === 0 && d.getMonth() !== lastMonth) { lastMonth = d.getMonth(); g += `<text x="${X + col * (C + G)}" y="10">${d.toLocaleString(undefined, { month: "short" })}</text>`; }
   }
-  document.getElementById("chart").innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Time per day">${g}</svg>`;
+  for (let d = new Date(today); (by[local(d)] || 0) > 0; d.setDate(d.getDate() - 1)) streak++;
+  for (const [r, l] of [[1, "Mon"], [3, "Wed"], [5, "Fri"]]) g += `<text x="0" y="${Y + r * (C + G) + 9}">${l}</text>`;
+  const W = X + 53 * (C + G), H = Y + 7 * (C + G);
+  $("#heat").innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Effort per day over the last year">${g}</svg>`;
+  $("#heatMeta").textContent = `${hm(total)} over ${active} day${active === 1 ? "" : "s"}` + (streak ? ` · ${streak}-day streak` : "") + (best > 1 ? ` · best ${best}` : "");
+}
+function projects(ps) {
+  $("#projMeta").textContent = ps.length ? `${ps.length} project${ps.length === 1 ? "" : "s"}` : "";
+  $("#projects").innerHTML = ps.length ? `<table class="stable"><thead><tr><th>Project</th><th><img src="/assets/dot6-effort.svg" alt="">Effort</th><th>Your time</th><th>Last active</th></tr></thead><tbody>` +
+    ps.slice(0, 12).map((p) => `<tr${p.repo_url ? ` onclick="window.open('${esc(p.repo_url)}','_blank','noopener')"` : ""}><td><div class="sname"><b>${esc(p.name)}</b><span>${p.repo_url ? esc(p.repo_url.replace(/^https:\/\//, "")) : plural(p.prompts, "prompt")}</span></div></td><td class="eff">${hm(p.effort_s)}</td><td>${hm(p.you_s)}</td><td class="quiet">${dayName(p.last_day)}</td></tr>`).join("") +
+    `</tbody></table>` : `<p class="empty">No projects yet.</p>`;
+}
+function kinds(k, judged, total) {
+  const rows = Object.entries(k).sort((a, b) => b[1] - a[1]);
+  const max = Math.max(1, ...rows.map((r) => r[1]));
+  $("#kindMeta").textContent = `${judged} of ${total} judged`;
+  $("#kinds").innerHTML = rows.length ? rows.map(([name, n]) => `<div class="kind"><b>${esc(KIND[name] || name)}</b><div><div class="bar${COUNTS.has(name) ? "" : " dim"}" style="width:${(n / max * 100).toFixed(1)}%"></div></div><span>${n}</span></div>`).join("") : `<p class="empty">No prompts judged yet.</p>`;
+}
+function sessions(ss) {
+  $("#sessMeta").textContent = ss.length ? `last ${ss.length}` : "";
+  const when = (a) => new Date(a).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  $("#sessions").innerHTML = ss.length ? `<table class="stable"><thead><tr><th>Session</th><th>Project</th><th><img src="/assets/dot6-effort.svg" alt="">Effort</th><th>Your time</th><th><img src="/assets/dot6-observed.svg" alt="">Agent alone</th></tr></thead><tbody>` +
+    ss.map((x) => `<tr><td><div class="sname"><b>${when(x.start)}</b><span>${spanText(x.start, x.end)} · ${plural(x.prompts, "prompt")}</span></div></td><td class="proj">${esc(x.project)}</td><td class="eff">${x.judged ? hm(x.effort_s) : "–"}</td><td>${hm(x.you_s)}</td><td>${hm(x.ai_s)}</td></tr>`).join("") +
+    `</tbody></table>` : `<p class="empty">No sessions yet. Connect a device in Settings.</p>`;
+}
+function live(s) {
+  const box = $("#liveStatus"); if (!box) return;
+  box.classList.toggle("idle", !s.live);
+  $("#liveTitle").textContent = s.live ? "Coding now" : s.last_event ? "Not coding" : "No activity yet";
+  $("#liveSub").textContent = s.live ? "updates every 15 s" : s.last_event ? "last active " + new Date(s.last_event).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
 }
 async function load() {
   const r = await fetch(`/api/u/${user}`, { cache: "no-store" });
   if (!r.ok) return;
-  const s = await r.json();
-  document.getElementById("live").innerHTML = s.live ? "<span class=live title='coding now'></span>" : "";
-  document.getElementById("last").textContent = s.last_event ? (s.live ? "coding now" : "last active " + new Date(s.last_event).toLocaleString()) : "no activity yet";
-  document.getElementById("weekEffort").textContent = hm(s.week.effort_s);
-  document.getElementById("weekObs").textContent = hm(s.week.observed_s);
-  document.getElementById("today").textContent = hm(s.today.effort_s) + " effort";
-  document.getElementById("allEffort").textContent = hm(s.all.effort_s);
-  chart(s.days);
-  document.getElementById("projects").innerHTML = "<tr><th>Project</th><th>Estimated effort</th><th>Your time</th><th>AI alone</th><th>Prompts</th><th>Last</th></tr>" +
-    (s.projects.map((p) => `<tr><td>${p.repo_url ? `<a href="${esc(p.repo_url)}" rel="nofollow noopener">${esc(p.name)}</a>` : esc(p.name)}</td><td>${hm(p.effort_s)}</td><td>${hm(p.you_s)}</td><td>${hm(p.ai_s)}</td><td>${p.prompts}</td><td>${esc(p.last_day)}</td></tr>`).join("") || "<tr><td class=muted colspan=6>No projects yet.</td></tr>");
-  document.getElementById("how").textContent = `${s.judged} of ${s.prompts} prompts judged by Jev. Observed time counts your reading, thinking and typing between prompts plus the AI working alone, each moment once. Estimated effort weights your time by what each prompt was doing; it's an unvalidated estimate. Audit: ${s.audit.devices} device(s), ${s.audit.heads} log heads recorded on arrival, ${s.audit.breaks} chain break(s).`;
+  stats = await r.json();
+  render(); heat(stats.days); projects(stats.projects); kinds(stats.kinds, stats.judged, stats.prompts); sessions(stats.sessions || []); live(stats);
+  $("#auditLine").textContent = `Counts, timings and effort labels only, never prompt text or code. Effort is an unvalidated estimate. ${plural(stats.audit.devices, "device")}, ${plural(stats.audit.heads, "log checkpoint")} kept by the server, ${plural(stats.audit.breaks, "chain break")}.`;
 }
+document.querySelectorAll("#rangeSeg button").forEach((b) => b.onclick = () => {
+  document.querySelectorAll("#rangeSeg button").forEach((x) => x.classList.toggle("on", x === b));
+  range = Number(b.dataset.range); render();
+});
 load(); setInterval(load, 15000);
 </script>
 """
