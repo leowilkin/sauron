@@ -262,6 +262,29 @@ events.jsonl ──▶ tracker/timemodel.py (segments → credited time) ──�
 - **Crash safety:** if the file ends in a partial line, the next write starts a new line. `verify` then reports the partial line, and the rest of the log stays readable.
 - **Finding Python:** `run.sh` uses `python3`, then `python`, then `py -3`. It skips the Windows Store stub without starting it, converts Git Bash paths for native Windows Python, and caches the resolved interpreter in `~/.ai-tracker/.python`. Python runs with `-I -S -X utf8`: isolated mode, no `site` import (about 30 ms faster), and UTF-8 regardless of the Windows code page.
 
+## Server
+
+`server/` is the ai-tracker server: Hack Club Auth accounts, public-by-default profiles with live stats, per-project totals linked to each project's git remote, and an ingest API. It runs at https://ai-tracker.k.hackclub.dev (Orchard, YSWS org).
+
+Connect a computer to it:
+
+1. Sign in at the server, open **Settings → Add a device** and copy the key.
+2. Run `python3 ~/ai-tracker/tracker/aitrack.py connect https://ai-tracker.k.hackclub.dev` and paste the key at the hidden prompt.
+
+After that, the hooks send new activity in the background after each turn. Only allowlisted fields are sent, and the server drops anything outside its own allowlist too:
+- counts and timings
+- project names and project-relative file paths
+- Jev labels
+- each project's git remote
+
+Each line's hash and the hash it links to are sent as well. The server keeps every device's latest hash as it arrives, so a log rewritten later no longer matches what the server already holds.
+
+Running it yourself: `pip install -r server/requirements.txt`, then `uvicorn server.app:app` from the repo root. Settings:
+- `PUBLIC_ORIGIN` and `HCA_CLIENT_ID` / `HCA_CLIENT_SECRET`, from an app at auth.hackclub.com/developer/apps with redirect `<origin>/auth/callback`
+- `DATABASE_URL` for Postgres. Without it the server uses a local SQLite file.
+
+The session secret is generated and kept in the database unless `SESSION_SECRET` is set.
+
 ## Privacy
 
 Stored: timestamps, session and prompt ids, project name, `cwd`, relative file paths, character counts and line counts. From the typing module, the event log gets only counters and timings. The separate local replay file holds the layout (letter, space, newline) and timing of each edit, never the characters themselves. For the AI's reply, that's only its length: prose characters and code-block lines.
