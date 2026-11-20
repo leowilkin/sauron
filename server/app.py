@@ -506,51 +506,81 @@ def _dashboard_css():
 
 
 SITE_CSS = """
-.window { min-height: min(760px, calc(100vh - 96px)); }
-.brand { display: flex; align-items: center; gap: 8px; margin: 0 8px 14px; font-size: 13px; font-weight: 700; color: var(--t1); text-decoration: none; }
-.brand img { width: 52px; height: 12px; }
-.me { display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: 10px; background: rgba(255, 255, 255, 0.45); text-decoration: none; color: var(--t1); }
-.me .av { width: 26px; height: 26px; border-radius: 13px; background: var(--effort); color: #fff; display: grid; place-items: center; font-size: 12px; font-weight: 700; flex: none; }
-.me b { font-size: 12px; font-weight: 590; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.me span { font-size: 11px; color: var(--t3); display: block; }
-.toolbar .btn { margin-left: 4px; }
-.stable td.rank { width: 28px; }
+/* Web layout: the Figma's materials (glass, type, panels, colours) on a normal page instead of an app window. */
+body.site { background: #f5f5f7; font-size: 14px; min-height: 100vh; display: flex; flex-direction: column; }
+.topbar { position: sticky; top: 0; z-index: 20; background: rgba(245, 245, 247, 0.72);
+  -webkit-backdrop-filter: saturate(1.8) blur(20px); backdrop-filter: saturate(1.8) blur(20px); border-bottom: 0.5px solid rgba(0, 0, 0, 0.1); }
+.topbar-in { max-width: 1120px; margin: 0 auto; height: 52px; padding: 0 24px; display: flex; align-items: center; gap: 28px; }
+.wordmark { font-size: 17px; font-weight: 700; letter-spacing: -0.3px; color: var(--t1); text-decoration: none; }
+.topbar-in nav { display: flex; gap: 22px; }
+.topbar-in nav a { font-size: 13px; color: var(--t2); text-decoration: none; padding: 16px 0 14px; border-bottom: 2px solid transparent; }
+.topbar-in nav a:hover { color: var(--t1); }
+.topbar-in nav a.on { color: var(--t1); font-weight: 590; border-bottom-color: var(--t1); }
+.bar-end { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.avatar { width: 30px; height: 30px; border-radius: 15px; background: var(--effort); color: #fff; display: grid; place-items: center; font-size: 13px; font-weight: 700; text-decoration: none; }
+.wrap { width: 100%; max-width: 1120px; margin: 0 auto; padding: 36px 24px 48px; flex: 1; }
+.pagehead { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+.pagehead > div:first-child { margin-right: auto; min-width: 0; }
+.pagehead h1 { margin: 0; font-size: 34px; font-weight: 700; letter-spacing: -0.6px; line-height: 1.1; }
+.pagehead p { margin: 6px 0 0; font-size: 14px; color: var(--t3); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.live-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--t2); background: rgba(52, 199, 89, 0.12); padding: 3px 10px; border-radius: 999px; }
+.live-pill img { width: 7px; height: 7px; }
+.live-pill b { font-weight: 590; color: #1f8f3a; }
+.live-pill.idle { background: rgba(0, 0, 0, 0.05); }
+.live-pill.idle b { color: var(--t2); }
+.live-pill.idle img { filter: grayscale(1); opacity: 0.5; }
+.view { gap: 16px; }
+.panel, .measure { background: #fff; box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04); border-radius: 14px; padding: 18px 20px; }
+.measure .big { font-size: 32px; }
+.panel h2 { font-size: 15px !important; }
+.stable tbody tr:hover td { background: rgba(0, 0, 0, 0.025); }
 .stable .eff { color: var(--effort); }
+.stable td.rank { width: 28px; }
 .livedot { width: 8px; height: 8px; vertical-align: 0; }
-.notice { margin: 0; font-size: 12px; color: var(--t2); background: rgba(255, 141, 40, 0.12); border-radius: 10px; padding: 10px 12px; }
-.intro h2 { font-size: 20px !important; font-weight: 700 !important; letter-spacing: -0.2px; }
-.intro .sub { font-size: 13px; line-height: 19px; max-width: 62ch; }
-.plain { font: 510 12px var(--font); color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; }
+.privacy-line { padding: 4px 2px 0; }
+.sitefoot { max-width: 1120px; width: 100%; margin: 0 auto; padding: 18px 24px 28px; display: flex; gap: 14px; font-size: 12px; color: var(--t4); border-top: 0.5px solid rgba(0, 0, 0, 0.08); }
+.sitefoot a { color: var(--t3); text-decoration: none; }
+.notice { margin: 0; font-size: 13px; color: var(--t2); background: rgba(255, 141, 40, 0.12); border-radius: 12px; padding: 12px 14px; }
+.intro { padding: 28px !important; }
+.intro h2 { font-size: 24px !important; font-weight: 700 !important; letter-spacing: -0.3px; margin-bottom: 6px !important; }
+.intro .sub { font-size: 15px; line-height: 22px; max-width: 60ch; color: var(--t2); margin-bottom: 18px; }
+.plain { font: 510 13px var(--font); color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; }
 .plain.danger { color: var(--danger); }
 .privacy-line form { margin-left: auto; }
-.inline-form { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.inline-form { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
 .inline-form input, .fields input:not([type=checkbox]) {
-  font: 13px var(--font); color: var(--t1); background: #fff; border: 0.5px solid rgba(0, 0, 0, 0.14); border-radius: 8px;
-  padding: 0 10px; height: 32px; min-width: 0; flex: 1 1 220px; max-width: 360px;
-}
-.fields { display: flex; flex-direction: column; gap: 12px; }
-.fields label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; font-weight: 590; color: var(--t4); }
-.fields .check-row { flex-direction: row; align-items: center; gap: 8px; font-size: 13px; font-weight: 400; color: var(--t1); }
-.keypanel { background: rgba(52, 199, 89, 0.1); }
-.cmd, .keyrow code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: #fff; border-radius: 8px; padding: 9px 12px; margin: 0; overflow-x: auto; display: block; }
+  font: 14px var(--font); color: var(--t1); background: #fff; border: 0.5px solid rgba(0, 0, 0, 0.16); border-radius: 9px;
+  padding: 0 11px; height: 34px; min-width: 0; flex: 1 1 220px; max-width: 360px; }
+.fields { display: flex; flex-direction: column; gap: 14px; }
+.fields label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 590; color: var(--t3); }
+.fields .check-row { flex-direction: row; align-items: center; gap: 8px; font-size: 14px; font-weight: 400; color: var(--t1); }
+.keypanel { background: #effbf2 !important; }
+.cmd, .keyrow code { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; background: #f5f5f7; border-radius: 9px; padding: 10px 12px; margin: 0; overflow-x: auto; display: block; }
 .keyrow { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
 .keyrow code { flex: 1; min-width: 0; word-break: break-all; }
 .keyrow .glass { padding: 0 14px; }
 .heat { overflow-x: auto; }
 .heat svg { min-width: 640px; }
-.heat rect.d { rx: 2.5px; }
 .heat-foot { display: flex; align-items: center; gap: 6px; justify-content: flex-end; font-size: 11px; color: var(--t3); margin-top: 6px; }
 .heat-foot i { width: 10px; height: 10px; border-radius: 2.5px; display: inline-block; }
-.kinds { display: flex; flex-direction: column; gap: 6px; }
-.kind { display: grid; grid-template-columns: 170px 1fr 36px; gap: 10px; align-items: center; font-size: 12px; }
+.kinds { display: flex; flex-direction: column; gap: 7px; }
+.kind { display: grid; grid-template-columns: 180px 1fr 36px; gap: 10px; align-items: center; font-size: 13px; }
 .kind .bar { height: 8px; border-radius: 4px; background: var(--effort); min-width: 2px; }
 .kind .bar.dim { background: var(--gray); opacity: 0.45; }
 .kind b { font-weight: 510; }
 .kind span { text-align: right; color: var(--t3); font-variant-numeric: tabular-nums; }
-@media (max-width: 860px) { .kind { grid-template-columns: 120px 1fr 30px; } .me { display: none; } }
+@media (max-width: 720px) {
+  .topbar-in { gap: 16px; padding: 0 16px; }
+  .topbar-in nav { gap: 14px; }
+  .wrap { padding: 24px 16px 36px; }
+  .pagehead h1 { font-size: 28px; }
+  .kind { grid-template-columns: 120px 1fr 30px; }
+  .sitefoot { padding: 16px; }
+}
 """
 
 APP_CSS = _dashboard_css() + SITE_CSS
+CSS_VERSION = hashlib.sha256(APP_CSS.encode("utf-8")).hexdigest()[:10]  # new URL whenever the styles change
 
 RANGE_SEG = """<div class="glass seg" id="rangeSeg" role="group" aria-label="Time range">
 <button data-range="7" class="on">Week</button><button data-range="30">Month</button><button data-range="365">Year</button><button data-range="0">All</button></div>"""
@@ -558,7 +588,7 @@ RANGE_SEG = """<div class="glass seg" id="rangeSeg" role="group" aria-label="Tim
 
 @app.get("/assets/app.css")
 def app_css():
-    return Response(APP_CSS, media_type="text/css", headers={"Cache-Control": "public, max-age=300"})
+    return Response(APP_CSS, media_type="text/css", headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
 
 app.mount("/assets", StaticFiles(directory=ASSETS), name="assets")
@@ -598,28 +628,26 @@ def ago(iso):
 
 
 def page(title, body, me=None, active="", sub="", toolbar="", status_user=None):
-    def nav(key, href, icon, label):
-        return '<a href="%s" class="%s"><img src="/assets/%s" alt="">%s</a>' % (href, "on" if key == active else "", icon, label)
-    links = nav("week", "/", "icon-chart.svg", "This Week")
+    """A web page in the Figma's visual language: glass top bar, page header, panels. No app window."""
+    def nav(key, href, label):
+        return '<a href="%s"%s>%s</a>' % (href, ' class="on" aria-current="page"' if key == active else "", label)
+    links = nav("week", "/", "This Week")
     if me:
-        links += '<div class="section">You</div>' + nav("me", "/u/" + esc(me["username"]), "icon-person.svg", "Profile") + \
-            nav("settings", "/settings", "icon-doc.svg", "Devices &amp; Settings")
-    links += '<div class="section">About</div>' + \
-        '<a href="%s"><img src="/assets/icon-git.svg" alt="">Source Code</a>' % REPO_URL
-    foot = ('<a class="me" href="/u/%s"><span class="av">%s</span><div><b>%s</b><span>@%s</span></div></a>'
-            % (esc(me["username"]), esc((me["name"] or me["username"])[:1].upper()), esc(me["name"] or me["username"]),
-               esc(me["username"]))) if me else '<a class="btn" href="/auth/start" style="justify-content:center">Sign In</a>'
-    status = ""
-    if status_user is not None:
-        status = '<div class="status idle" id="liveStatus"><img src="/assets/dot-live.svg" alt=""><div><b id="liveTitle">Checking…</b><span id="liveSub"></span></div></div>'
+        links += nav("me", "/u/" + esc(me["username"]), "Profile") + nav("settings", "/settings", "Devices")
+    account = ('<a class="avatar" href="/u/%s" title="%s"><span>%s</span></a>'
+               % (esc(me["username"]), esc(me["name"] or me["username"]), esc((me["name"] or me["username"])[:1].upper()))
+               ) if me else '<a class="btn" href="/auth/start">Sign In</a>'
+    status = ('<span class="live-pill idle" id="liveStatus"><img src="/assets/dot-live.svg" alt="">'
+              '<b id="liveTitle">Checking…</b><span id="liveSub"></span></span>') if status_user is not None else ""
     return HTMLResponse("""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>%s · ai-tracker</title>
-<link rel="stylesheet" href="/assets/app.css"></head><body><div class="desk"><div class="window">
-<aside class="sidebar"><a class="brand" href="/"><img src="/assets/window-controls.svg" alt="">ai-tracker</a>
-<nav class="nav" aria-label="Sections">%s</nav><div class="side-spacer"></div>%s%s</aside>
-<div class="content"><div class="toolbar"><div class="title"><b>%s</b><span>%s</span></div>%s</div>
-<div class="scroll">%s</div></div></div></div><div id="tip"></div></body></html>""" % (
-        esc(title), links, status, foot, esc(title), esc(sub), toolbar, body))
+<link rel="stylesheet" href="/assets/app.css?v=%s"></head><body class="site">
+<header class="topbar"><div class="topbar-in"><a class="wordmark" href="/">ai-tracker</a><nav aria-label="Main">%s</nav>
+<div class="bar-end">%s</div></div></header>
+<main class="wrap"><div class="pagehead"><div><h1>%s</h1><p>%s%s</p></div>%s</div>
+<div class="view">%s</div></main>
+<footer class="sitefoot"><span>ai-tracker · AGPLv3</span><a href="%s">Source</a></footer>
+<div id="tip"></div></body></html>""" % (esc(title), CSS_VERSION, links, account, esc(title), esc(sub), status, toolbar, body, REPO_URL))
 
 
 PROFILE_HTML = r"""
