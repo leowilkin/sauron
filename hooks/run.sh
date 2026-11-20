@@ -4,8 +4,9 @@
 # Claude Code runs hooks with bash on every OS (Git Bash on Windows).
 # Always exits 0 so a missing Python can never break a Claude Code session.
 
-here="${BASH_SOURCE[0]%/*}"   # no subshell: forks are slow on Windows
-[ "$here" = "${BASH_SOURCE[0]}" ] && here=.
+src="${BASH_SOURCE[0]//\\//}"  # Windows callers (the Amp plugin's path.join) pass C:\...\run.sh
+here="${src%/*}"                # no subshell: forks are slow on Windows
+[ "$here" = "$src" ] && here=.
 # Which adapter: `run.sh amp` for the Amp plugin; no argument for the Claude Code hooks.
 case "${1:-}" in amp) adapter=amp ;; *) adapter=claude_code ;; esac
 script="$here/../tracker/$adapter.py"
