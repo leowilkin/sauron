@@ -1,0 +1,14 @@
+{
+  "name": "ai-tracker",
+  "description": "Local marketplace for the ai-tracker Claude Code plugin",
+  "owner": {
+    "name": "ai-tracker contributors"
+  },
+  "plugins": [
+    {
+      "name": "ai-tracker",
+      "source": "./",
+      "description": "Passive AI coding activity log"
+    }
+  ]
+}

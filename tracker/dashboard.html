@@ -1,0 +1,1737 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Tracker</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: a macOS 27 window (glass sidebar + white content) floating on a wallpaper,
+   following the "Sauron · Liquid glass tracker proposal" Figma file. One deliberate light look. */
+:root {
+  color-scheme: light;
+  --wall: linear-gradient(180deg, #3e6ed0 0%, #6f98e2 38%, #b9c9ec 64%, #ead6d6 84%, #f4d9c6 100%);
+  --content: #ffffff;
+  --sidebar: rgba(238, 241, 248, 0.62);
+  --fill: rgba(0, 0, 0, 0.04);
+  --sep: rgba(0, 0, 0, 0.06);
+  --sep-strong: rgba(0, 0, 0, 0.08);
+  --t1: rgba(0, 0, 0, 0.85);
+  --t2: rgba(0, 0, 0, 0.6);
+  --t3: rgba(0, 0, 0, 0.5);
+  --t4: rgba(0, 0, 0, 0.45);
+  --accent: #0088ff;
+  --observed: #00c3d0;
+  --effort: #cb30e0;
+  --orange: #ff8d28;
+  --green: #34c759;
+  --gray: #8e8e93;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", "Inter", "Helvetica Neue", system-ui, sans-serif;
+  /* tokens the charts draw with */
+  --surface-0: #f5f5f7;
+  --surface-1: #ffffff;
+  --border: rgba(0, 0, 0, 0.08);
+  --grid: rgba(0, 0, 0, 0.06);
+  --text-primary: rgba(0, 0, 0, 0.85);
+  --text-secondary: rgba(0, 0, 0, 0.6);
+  --text-muted: rgba(0, 0, 0, 0.45);
+  --series-1: #0088ff;
+  --series-2: #00c3d0;
+  --zone: rgba(203, 48, 224, 0.07);
+  --danger: #ff3b30;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: #6f98e2; color: var(--t1); font: 13px/1.35 var(--font); -webkit-font-smoothing: antialiased; }
+.desk {
+  min-height: 100vh; background: var(--wall); background-attachment: fixed;
+  padding-block: 40px 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.window {
+  max-width: 1240px; margin: 0 auto; display: grid; grid-template-columns: 220px minmax(0, 1fr);
+  border-radius: 16px; overflow: hidden; min-height: min(820px, calc(100vh - 96px));
+  box-shadow: 0 0 1px rgba(0, 0, 0, 0.18), 0 24px 72px rgba(0, 0, 0, 0.3);
+}
+
+/* ---------- sidebar (Liquid Glass) ---------- */
+.sidebar {
+  background: var(--sidebar); -webkit-backdrop-filter: blur(40px) saturate(1.4); backdrop-filter: blur(40px) saturate(1.4);
+  border-right: 1px solid var(--sep-strong); padding: 19px 10px 10px; display: flex; flex-direction: column; gap: 8px; min-width: 0;
+}
+.sidebar .controls { margin: 0 8px 13px; display: block; }
+.nav { display: flex; flex-direction: column; gap: 2px; }
+.nav .section { font-size: 11px; font-weight: 590; color: var(--t4); padding: 12px 8px 4px; }
+.nav a {
+  display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: 8px;
+  color: var(--t1); text-decoration: none; font-size: 13px;
+}
+.nav a img { width: 16px; height: 16px; flex: none; }
+.nav a .count { margin-left: auto; font-size: 12px; color: var(--t4); font-variant-numeric: tabular-nums; }
+.nav a:hover { background: rgba(0, 0, 0, 0.04); }
+.nav a.on { background: rgba(0, 0, 0, 0.08); font-weight: 510; }
+.nav a:focus-visible, .glass:focus-visible, .btn:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.side-spacer { flex: 1; }
+.side-field { display: flex; flex-direction: column; gap: 3px; padding: 0 2px; }
+.side-field label { font-size: 11px; font-weight: 590; color: var(--t4); padding-left: 6px; }
+.side-field select {
+  font: 13px var(--font); color: var(--t1); background: rgba(255, 255, 255, 0.6); border: 0.5px solid rgba(255, 255, 255, 0.9);
+  border-radius: 8px; padding: 5px 8px; box-shadow: 0 0 1px rgba(0, 0, 0, 0.1); width: 100%; min-width: 0;
+}
+.status { background: rgba(255, 255, 255, 0.45); border-radius: 10px; padding: 10px; display: flex; gap: 8px; align-items: center; }
+.status img { width: 8px; height: 8px; flex: none; }
+.status.idle img { filter: grayscale(1); opacity: 0.6; }
+.status b { display: block; font-size: 12px; font-weight: 510; color: var(--t1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status span { display: block; font-size: 11px; color: var(--t3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- content + toolbar ---------- */
+.content { background: var(--content); min-width: 0; position: relative; }
+.toolbar {
+  position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; min-height: 56px;
+  padding: 10px 16px 6px 20px; flex-wrap: wrap;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.8) 70%, rgba(255, 255, 255, 0) 100%);
+}
+.title { display: flex; flex-direction: column; min-width: 0; margin-right: auto; }
+.title b { font-size: 15px; font-weight: 700; color: var(--t1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.title span { font-size: 11px; color: var(--t3); }
+.glass {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 4px; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  border: 0.5px solid rgba(255, 255, 255, 0.9);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), 0 0 1px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.1);
+  font: 510 13px var(--font); color: var(--t1); text-decoration: none; cursor: pointer;
+}
+.glass img { width: 16px; height: 16px; }
+.glass.icon { width: 33px; justify-content: center; padding: 0; }
+.seg { padding: 0 3px; gap: 0; }
+.seg button { font: 510 13px var(--font); color: var(--t1); background: none; border: 0; height: 26px; padding: 0 14px; border-radius: 999px; cursor: pointer; }
+.seg button.on { background: rgba(0, 0, 0, 0.08); font-weight: 590; }
+.btn {
+  display: inline-flex; align-items: center; height: 32px; padding: 0 14px; border-radius: 999px; border: 0; cursor: pointer;
+  background: var(--accent); color: #fff; font: 590 13px var(--font); text-decoration: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 0 1px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+.updated { font-size: 11px; color: var(--t3); }
+.scroll { padding: 12px 24px 24px; display: flex; flex-direction: column; gap: 16px; }
+[hidden], [data-view][hidden] { display: none !important; }
+.view { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+
+/* ---------- panels and type ---------- */
+.panel, .card { background: var(--fill); border-radius: 12px; padding: 16px; min-width: 0; }
+.panel h2, .card h2 { font-size: 13px; font-weight: 590; margin: 0; color: var(--t1); }
+.phead { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.phead .meta { margin-left: auto; font-size: 12px; color: var(--t3); }
+.sub { font-size: 12px; color: var(--t2); margin: 4px 0 12px; line-height: 16px; max-width: 90ch; }
+.empty { color: var(--t4); padding: 20px 0; text-align: center; font-size: 12px; }
+.err { color: var(--danger); }
+.tag { display: inline-flex; align-items: center; padding: 2px 6px; border-radius: 5px; font-size: 11px; font-weight: 590; white-space: nowrap; background: rgba(142, 142, 147, 0.12); color: var(--gray); }
+.tag.effort { background: rgba(203, 48, 224, 0.12); color: var(--effort); }
+.tag.blue { background: rgba(0, 136, 255, 0.12); color: var(--accent); }
+.dotlabel { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 590; color: var(--t1); white-space: nowrap; }
+.dotlabel img { width: 8px; height: 8px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 12px; }
+.grid2 > * { min-width: 0; }
+
+/* measures */
+.measures { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 12px; }
+.measure { background: var(--fill); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.measure .mhead { display: flex; align-items: center; gap: 6px; }
+.measure .mhead .tag { margin-left: auto; }
+.measure .big { font-size: 28px; font-weight: 590; letter-spacing: -0.28px; color: var(--t1); font-variant-numeric: tabular-nums; }
+.measure p { margin: 0; font-size: 12px; line-height: 16px; color: rgba(0, 0, 0, 0.55); }
+
+/* where the time went */
+.stack { display: flex; gap: 2px; height: 14px; border-radius: 7px; overflow: hidden; }
+.stack div { height: 100%; min-width: 2px; }
+.stack-labels { display: flex; gap: 2px; margin-top: 10px; }
+.stack-labels div { min-width: 0; display: flex; flex-direction: column; gap: 1px; white-space: nowrap; }
+.stack-labels b { font-size: 13px; font-weight: 590; }
+.stack-labels span { font-size: 11px; color: rgba(0, 0, 0, 0.55); overflow: hidden; text-overflow: ellipsis; }
+.note-line { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 12px; color: var(--t2); }
+.note-line .bracket { height: 4px; border-radius: 2px; background: var(--effort); flex: none; }
+
+/* sessions table */
+.stable { width: 100%; border-collapse: collapse; }
+.stable th { font-size: 11px; font-weight: 590; color: var(--t4); text-align: left; height: 26px; padding: 0 8px 0 0; border-bottom: 1px solid var(--sep-strong); white-space: nowrap; }
+.stable th img { width: 6px; height: 6px; margin-right: 5px; vertical-align: 1px; }
+.stable td { height: 46px; padding: 0 8px 0 0; border-bottom: 1px solid var(--sep); font-size: 13px; white-space: nowrap; }
+.stable tr:last-child td { border-bottom: 0; }
+.stable tbody tr { cursor: pointer; }
+.stable tbody tr:hover td { background: rgba(0, 0, 0, 0.02); }
+.stable .sname { display: flex; flex-direction: column; gap: 1px; max-width: 420px; min-width: 0; }
+.stable .sname b { font-weight: 510; color: var(--t1); overflow: hidden; text-overflow: ellipsis; }
+.stable .sname span { font-size: 11px; color: var(--t3); overflow: hidden; text-overflow: ellipsis; }
+.stable .proj { color: rgba(0, 0, 0, 0.75); }
+.stable .eff { font-weight: 510; }
+.stable .quiet { font-size: 12px; color: var(--t4); }
+.status-pill { display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 12px; font-weight: 510; }
+.table-scroll { overflow-x: auto; }
+.privacy-line { display: flex; align-items: center; gap: 8px; padding: 0 4px; font-size: 12px; color: rgba(0, 0, 0, 0.55); flex-wrap: wrap; }
+.privacy-line img { width: 14px; height: 14px; }
+.privacy-line a, a.link { color: var(--accent); font-weight: 510; text-decoration: none; }
+.privacy-line a { margin-left: auto; }
+
+/* session detail */
+.summary { display: flex; align-items: center; gap: 24px; padding: 0 4px; flex-wrap: wrap; }
+.stat { display: flex; flex-direction: column; gap: 2px; }
+.stat .dotlabel { color: var(--t2); }
+.stat b { font-size: 22px; font-weight: 590; letter-spacing: -0.22px; font-variant-numeric: tabular-nums; }
+.summary .tag { margin-left: auto; }
+.timeline { display: flex; flex-direction: column; gap: 8px; }
+.group { font-size: 10px; font-weight: 590; letter-spacing: 0.4px; padding: 2px 0; }
+.group.observed { color: var(--observed); }
+.group.effort { color: var(--effort); }
+.lane { display: flex; align-items: center; gap: 10px; height: 24px; }
+.lane .llabel { width: 150px; flex: none; display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 510; white-space: nowrap; overflow: hidden; }
+.lane .llabel img { width: 7px; height: 7px; flex: none; }
+.lane .llabel span { font-size: 11px; font-weight: 400; color: var(--t4); }
+.track { position: relative; flex: 1; height: 18px; background: var(--fill); border-radius: 5px; overflow: hidden; min-width: 0; }
+.track i { position: absolute; top: 0; height: 18px; border-radius: 5px; min-width: 2px; }
+.track i.obs { background: rgba(0, 195, 208, 0.85); }
+.track i.obs2 { background: rgba(0, 195, 208, 0.4); }
+.track i.agent { background: rgba(142, 142, 147, 0.35); }
+.track i.prompt { top: 3px; height: 12px; width: 3px; min-width: 3px; border-radius: 1.5px; background: var(--accent); }
+.track i.eff { background: rgba(203, 48, 224, 0.9); }
+.lsep { height: 1px; background: var(--sep); }
+.axis { display: flex; gap: 10px; }
+.axis .gutter { width: 150px; flex: none; }
+.axis .ticks { position: relative; flex: 1; height: 14px; font-size: 10px; color: rgba(0, 0, 0, 0.4); }
+.axis .ticks span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+.axis .ticks span:first-child { transform: none; }
+.reading { display: flex; gap: 6px; align-items: center; padding-top: 6px; font-size: 11px; color: rgba(0, 0, 0, 0.55); }
+.reading img { width: 13px; height: 13px; flex: none; }
+.why-evidence { display: grid; grid-template-columns: minmax(260px, 330px) minmax(0, 1fr); gap: 12px; }
+.why { display: flex; flex-direction: column; gap: 10px; }
+.why .intro { font-size: 12px; color: rgba(0, 0, 0, 0.55); margin: 0; }
+.test { display: flex; gap: 8px; align-items: flex-start; }
+.check { width: 18px; height: 18px; border-radius: 9px; background: rgba(52, 199, 89, 0.15); display: grid; place-items: center; flex: none; }
+.check img { width: 12px; height: 12px; }
+.check.no { background: rgba(142, 142, 147, 0.15); }
+.check.no::after { content: ""; width: 8px; height: 2px; border-radius: 1px; background: var(--gray); }
+.test b { display: block; font-size: 13px; font-weight: 510; }
+.test span { display: block; font-size: 11px; color: rgba(0, 0, 0, 0.55); }
+.caveat { margin-top: auto; background: rgba(255, 255, 255, 0.8); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 4px; }
+.caveat p { margin: 0; font-size: 11px; line-height: 15px; color: var(--t2); }
+.caveat a { font-size: 12px; font-weight: 510; color: var(--accent); text-decoration: none; }
+.evidence { padding: 14px 16px 8px; }
+.evidence .phead { margin-bottom: 8px; padding-bottom: 0; }
+.erow { display: flex; align-items: center; gap: 10px; min-height: 50px; border-top: 1px solid var(--sep); }
+.erow > img { width: 16px; height: 16px; flex: none; }
+.erow .etext { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.erow .etext b { font-size: 13px; font-weight: 510; }
+.erow .etext span { font-size: 11px; color: var(--t3); }
+.switch { width: 36px; height: 20px; border-radius: 10px; background: rgba(0, 0, 0, 0.09); position: relative; flex: none; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 24px; height: 16px; border-radius: 8px; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18); }
+.switch.on { background: var(--accent); }
+.switch.on::after { left: 10px; }
+.efoot { display: flex; gap: 6px; align-items: center; padding-top: 8px; font-size: 11px; color: var(--t3); }
+.efoot img { width: 13px; height: 13px; }
+
+/* ---------- existing components, restyled ---------- */
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+svg text { fill: var(--text-muted); font: 11px var(--font); font-variant-numeric: tabular-nums; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--t2); margin-bottom: 8px; }
+.legend i { display: inline-block; width: 8px; height: 8px; border-radius: 4px; margin-right: 6px; vertical-align: 0; }
+.legend i.ring { background: none !important; border: 2px solid var(--text-muted); }
+.hit { fill: transparent; }
+.hit:hover { fill: rgba(0, 0, 0, 0.04); }
+#tip {
+  position: fixed; pointer-events: none; z-index: 50; display: none; max-width: 340px;
+  background: rgba(255, 255, 255, 0.92); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  border: 0.5px solid rgba(0, 0, 0, 0.12); border-radius: 10px; padding: 8px 10px; font-size: 12px; color: var(--t1);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.16); white-space: pre-wrap; font-variant-numeric: tabular-nums;
+}
+.tiles, .lstats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.tile { background: rgba(255, 255, 255, 0.7); border-radius: 10px; padding: 12px; }
+.tile .label { font-size: 12px; font-weight: 590; color: var(--t2); }
+.tile .value { font-size: 22px; font-weight: 590; letter-spacing: -0.22px; margin: 2px 0; font-variant-numeric: tabular-nums; }
+.tile .note { font-size: 11px; color: var(--t3); }
+.tablewrap { overflow: auto; max-height: 520px; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 7px 8px; border-bottom: 1px solid var(--sep); white-space: nowrap; }
+th { color: var(--t4); font-weight: 590; font-size: 11px; position: sticky; top: 0; background: #f6f6f7; }
+th:nth-child(-n+2), td:nth-child(-n+2) { text-align: left; }
+select, input, button { font-family: var(--font); }
+.replay-controls { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; margin-bottom: 10px; font-size: 12px; color: var(--t2); }
+.replay-controls select { font: 13px var(--font); border: 0.5px solid rgba(0, 0, 0, 0.12); border-radius: 8px; padding: 5px 8px; background: #fff; min-width: 0; }
+.replay-controls select#replaySel { flex: 1 1 320px; }
+.replay-controls button, .ptable button, .more button, #applyFit {
+  font: 510 12px var(--font); color: var(--t1); background: rgba(255, 255, 255, 0.85); border: 0.5px solid rgba(0, 0, 0, 0.12);
+  border-radius: 999px; padding: 4px 12px; cursor: pointer; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+input[type=range] { flex: 1 1 140px; accent-color: var(--accent); min-width: 100px; }
+.replay-box { min-height: 96px; max-height: 320px; overflow: auto; padding: 12px 14px; line-height: 22px; background: #fff; border-radius: 10px; }
+.replay-box i { display: inline-block; vertical-align: middle; height: 12px; margin-right: 1px; }
+.replay-box i.k { width: 7px; border-radius: 2px; background: rgba(0, 0, 0, 0.25); }
+.replay-box i.k.new { background: var(--accent); }
+.replay-box i.k.del { background: var(--danger); opacity: 0.85; }
+.replay-box i.s { width: 7px; }
+.replay-box i.caret { width: 2px; height: 16px; margin: 0 1px; background: var(--t1); animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.replay-meta { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: 12px; color: var(--t2); font-variant-numeric: tabular-nums; }
+.replay-meta b { color: var(--t1); font-weight: 590; }
+.badge, .chip { display: inline-block; font-size: 11px; font-weight: 590; padding: 2px 7px; border-radius: 5px; background: rgba(142, 142, 147, 0.12); color: var(--gray); white-space: nowrap; }
+.chip.yes { background: rgba(203, 48, 224, 0.12); color: var(--effort); }
+.ptable td { vertical-align: middle; }
+.ptable td.what, .ptable th:nth-child(3), .ptable td.time, .ptable th:nth-child(4) { white-space: normal; text-align: left; }
+.ptable td.what { min-width: 380px; max-width: 560px; }
+.ptable td.time { min-width: 190px; }
+.ptable .tsplit { display: block; font-size: 11px; color: var(--t3); margin-top: 2px; }
+.ptext { color: var(--t1); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: 4px; cursor: pointer; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.ptext.open { display: block; -webkit-line-clamp: unset; }
+.decision { display: grid; gap: 2px; margin: 2px 0 4px; font-size: 12px; }
+.decision .updated { font-size: 11px; }
+.decision .chip { margin-left: 4px; }
+.ptable details { font-size: 11px; color: var(--t4); }
+.ptable details summary { cursor: pointer; list-style: none; }
+.ptable details summary::-webkit-details-marker { display: none; }
+.ptable details summary::after { content: " ▾"; }
+.ptable details[open] summary::after { content: " ▴"; }
+.why-bars { margin-top: 6px; display: grid; grid-template-columns: max-content 1fr max-content; gap: 3px 8px; font-size: 11px; color: var(--t2); align-items: center; }
+.why-bars .bar { height: 6px; border-radius: 3px; background: var(--effort); min-width: 1px; }
+.why-bars .bar.dim { background: var(--gray); opacity: 0.45; }
+.why-bars .sep { grid-column: 1 / -1; border-top: 1px solid var(--sep); margin: 3px 0; }
+.lbl { display: inline-flex; gap: 4px; margin-top: 6px; }
+.lbl button { padding: 1px 8px !important; font-size: 11px !important; color: var(--t2) !important; }
+.lbl button.on { background: var(--t1) !important; color: #fff !important; border-color: var(--t1) !important; }
+.more { margin-top: 10px; }
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 10px; margin: 6px 0 14px; }
+.steps > div { background: rgba(255, 255, 255, 0.75); border-radius: 10px; padding: 10px 12px; font-size: 12px; color: var(--t2); min-width: 0; }
+.steps b { display: block; color: var(--t1); margin-bottom: 3px; font-size: 13px; font-weight: 590; }
+.jq { display: grid; gap: 14px; }
+.jcard { background: rgba(255, 255, 255, 0.75); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+.jcard h3 { font-size: 13px; font-weight: 590; margin: 0 0 4px; }
+.jgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 12px; margin-top: 12px; }
+.used { font-size: 12px; color: var(--t2); margin: 0 0 8px; }
+.used b { color: var(--t1); }
+.groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: 14px; }
+.glabel { margin: 0 0 4px; font-size: 10px; font-weight: 590; letter-spacing: 0.4px; text-transform: uppercase; color: var(--t4); }
+.jcard td { text-align: left; white-space: normal; }
+.jcard td:first-child { white-space: nowrap; font-weight: 590; }
+.exact { margin-top: 8px; font-size: 11px; color: var(--t4); }
+.exact summary { cursor: pointer; }
+.exact p { margin: 6px 0 0; color: var(--t2); }
+.sliders { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; font-size: 12px; color: var(--t2); margin-bottom: 12px; }
+.sliders b { color: var(--t1); font-weight: 590; min-width: 44px; }
+#struggleBar { margin-top: 12px; }
+@media (prefers-reduced-motion: reduce) { .replay-box i.caret { animation: none; } }
+
+/* narrow windows: the sidebar becomes a strip above the content */
+@media (max-width: 860px) {
+  .desk { padding-block: 16px 24px; }
+  .window { grid-template-columns: minmax(0, 1fr); }
+  .sidebar { border-right: 0; border-bottom: 1px solid var(--sep-strong); }
+  .nav { flex-direction: row; flex-wrap: wrap; }
+  .nav .section { display: none; }
+  .nav a .count { margin-left: 4px; }
+  .side-spacer { display: none; }
+  .why-evidence { grid-template-columns: minmax(0, 1fr); }
+  .lane .llabel, .axis .gutter { width: 96px; }
+  .scroll { padding: 8px 16px 20px; }
+  .toolbar { padding: 10px 16px 6px; }
+}
+</style>
+</head>
+<body>
+<div class="desk">
+  <div class="window">
+    <aside class="sidebar">
+      <img class="controls" src="assets/window-controls.svg" width="52" height="12" alt="">
+      <nav class="nav" aria-label="Sections">
+        <a href="#overview" data-nav="overview"><img src="assets/icon-chart.svg" alt="">Overview</a>
+        <a href="#sessions" data-nav="sessions"><img src="assets/icon-clock.svg" alt="">Sessions<span class="count" id="nSessions"></span></a>
+        <a href="#projects" data-nav="projects"><img src="assets/icon-folder.svg" alt="">Projects<span class="count" id="nProjects"></span></a>
+        <div class="section">Review</div>
+        <a href="#prompts" data-nav="prompts"><img src="assets/icon-bubble.svg" alt="">Prompts<span class="count" id="nPrompts"></span></a>
+        <a href="#replays" data-nav="replays"><img src="assets/icon-film.svg" alt="">Replays</a>
+        <div class="section">Effort</div>
+        <a href="#effort" data-nav="effort"><img src="assets/icon-doc.svg" alt="">Effort Model</a>
+        <a href="#judging" data-nav="judging"><img src="assets/icon-info.svg" alt="">How It’s Judged</a>
+        <div class="section">You</div>
+        <a href="#calibration" data-nav="calibration"><img src="assets/icon-person.svg" alt="">Your Labels</a>
+        <a href="#privacy" data-nav="privacy"><img src="assets/icon-shield.svg" alt="">Privacy</a>
+      </nav>
+      <div class="side-spacer"></div>
+      <div class="side-field"><label for="source">Data</label><select id="source"></select></div>
+      <div class="side-field"><label for="project">Project</label><select id="project"><option value="">All projects</option></select></div>
+      <div class="status" id="trackStatus"><img src="assets/dot-live.svg" alt=""><div><b id="statusTitle">Loading…</b><span id="statusSub"></span></div></div>
+    </aside>
+
+    <div class="content">
+      <div class="toolbar">
+        <a class="glass icon" id="backBtn" href="#sessions" hidden aria-label="Back to sessions"><img src="assets/icon-chevl.svg" alt=""></a>
+        <div class="title"><b id="viewTitle">Overview</b><span id="viewSub"></span></div>
+        <span class="updated" id="updated"></span>
+        <div class="glass seg" id="rangeSeg" role="group" aria-label="Time range">
+          <button data-range="1">Day</button><button data-range="7">Week</button><button data-range="30">Month</button><button data-range="0" class="on">All</button>
+        </div>
+        <a class="btn" id="primaryBtn" href="#prompts" hidden>Review Prompts…</a>
+      </div>
+
+      <div class="scroll">
+        <section class="view" data-view="overview">
+          <div class="measures" id="measures"></div>
+          <div class="panel" id="whereTime"></div>
+          <div class="panel">
+            <div class="phead"><h2>Recent Sessions</h2><span class="meta" id="recentMeta"></span></div>
+            <div class="table-scroll" id="recentTable"></div>
+          </div>
+          <div class="panel">
+            <div class="phead"><h2>Time per Day</h2><span class="meta">parallel sessions count once</span></div>
+            <div class="legend"><span><i style="background:var(--series-1)"></i>You: reading, thinking, typing</span><span><i style="background:var(--series-2)"></i>Agent ran without you</span></div>
+            <div id="daily"></div>
+          </div>
+          <div class="privacy-line"><img src="assets/icon-lock.svg" alt=""><span>Logs keep counts and timings only, on this computer. Prompt text appears here only from your own transcripts, with secrets removed.</span><a href="#privacy">Privacy Settings…</a></div>
+        </section>
+
+        <section class="view" data-view="sessions" hidden>
+          <div class="panel">
+            <div class="phead"><h2>All Sessions</h2><span class="meta" id="sessionsMeta"></span></div>
+            <div class="table-scroll" id="sessionsTable"></div>
+          </div>
+        </section>
+
+        <section class="view" data-view="session" hidden>
+          <div id="sessionDetail"></div>
+        </section>
+
+        <section class="view" data-view="projects" hidden>
+          <div class="grid2">
+            <div class="panel">
+              <div class="phead"><h2>Time by Project</h2></div>
+              <div class="legend"><span><i style="background:var(--series-1)"></i>You</span><span><i style="background:var(--series-2)"></i>Agent alone</span></div>
+              <div id="projects"></div>
+            </div>
+            <div class="panel">
+              <div class="phead"><h2>Your Replies vs. Read Time</h2></div>
+              <p class="sub">Each dot is one reply. Above the line, you took longer than reading needs. Shaded: under ¼ of the read time.</p>
+              <div class="legend"><span><i style="background:var(--series-1)"></i>Reply</span><span><i style="background:var(--series-2)"></i>Faster than reading</span><span><i class="ring"></i>Break</span></div>
+              <div id="replies"></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="phead"><h2>By Day and Project</h2></div>
+            <p class="sub" id="tablenote"></p>
+            <div class="tablewrap" id="table"></div>
+          </div>
+        </section>
+
+        <section class="view" data-view="prompts" hidden>
+          <div class="panel" id="labelCard" hidden>
+            <div class="phead"><h2>Your Labels vs. the Model</h2></div>
+            <p class="sub">Label prompts below as <b>struggle</b>, <b>partly</b> or <b>not</b>. This compares your labels with the share the model gives each prompt and finds the settings that match you best. Labels stay on this computer.</p>
+            <div id="labelStats"></div>
+          </div>
+          <div class="panel">
+            <div class="phead"><h2>Prompts and the Time They Caused</h2></div>
+            <p class="sub">Each prompt owns your time leading into it (reading the last answer, thinking, typing it) and the agent's time working on it afterwards. Newest first. Click a prompt to read all of it.</p>
+            <div class="legend"><span><i style="background:var(--series-1)"></i>Your time before</span><span><i style="background:var(--series-2)"></i>Agent time after</span><span><span class="chip yes">35% · 2m 15s</span> credited as effort</span></div>
+            <div class="tablewrap" id="promptTable"></div>
+            <div class="more" id="promptMore"></div>
+          </div>
+        </section>
+
+        <section class="view" data-view="replays" hidden>
+          <div class="panel" id="replayCard">
+            <div class="phead"><h2>Prompt Replays</h2></div>
+            <p class="sub">How each prompt took shape, keystroke by keystroke. Layout only: blocks are characters, never the characters themselves. Red is text being deleted; long pauses are shortened.</p>
+            <div id="replay"></div>
+          </div>
+        </section>
+
+        <section class="view" data-view="effort" hidden>
+          <div id="jevWrap" style="display:none">
+            <div class="view">
+              <div class="panel">
+                <div class="phead"><h2>Estimated Effort</h2><span class="tag effort">Estimate</span></div>
+                <p class="sub">Your time before each prompt is built from what the prompt shows. <b>Reading:</b> the reply's read time, scaled by how much the prompt engaged with it (at least 30%). <b>Thinking:</b> (problem difficulty + your own reasoning) × the first slider. <b>Writing:</b> measured typing, or your typing pace. Never more than the time that passed, and nothing after Claude Code logged you away. Learning prompts (questions, asking about the agent's work, code with explanation, reviewing it) then count fully; other prompts count in proportion to your own reasoning. Agent time never counts.</p>
+                <div class="sliders">
+                  <label for="thinkPer">Thinking time per point</label><input type="range" id="thinkPer" min="0" max="120" step="5" value="30"><b id="thinkPerVal"></b>
+                  <label for="floorCut">Learning prompts earn at least</label><input type="range" id="floorCut" min="0" max="1" step="0.05" value="1"><b id="floorCutVal"></b>
+                  <label for="thinkCut">Full credit from a thinking score of</label><input type="range" id="thinkCut" min="0.5" max="3" step="0.1" value="1.5"><b id="thinkCutVal"></b>
+                </div>
+                <div class="tiles" id="struggleTiles"></div>
+                <div id="struggleBar"></div>
+              </div>
+              <div class="grid2">
+                <div class="panel">
+                  <div class="phead"><h2>What the Prompts Were Doing</h2></div>
+                  <p class="sub" id="jevNote"></p>
+                  <div id="jevPatterns"></div>
+                </div>
+                <div class="panel">
+                  <div class="phead"><h2>Where the Agent Time Came From</h2></div>
+                  <p class="sub">How long the agent worked after each kind of prompt.</p>
+                  <div id="jevAi"></div>
+                </div>
+              </div>
+              <div class="panel">
+                <div class="phead"><h2>Patterns vs. Passive Signals</h2></div>
+                <p class="sub">Medians per kind of prompt. "Own thinking" is Jev's 0–3 score; typing and reply times come from the tracker.</p>
+                <div class="tablewrap" id="jevTable"></div>
+              </div>
+            </div>
+          </div>
+          <div class="panel" id="noJev"><p class="empty">No Jev judgments for this data yet, so there is no effort estimate. Your time is still measured on the Overview.</p></div>
+        </section>
+
+        <section class="view" data-view="judging" hidden>
+          <div class="panel">
+            <div class="phead"><h2>How Jev Judges a Prompt</h2></div>
+            <div id="jevHow"></div>
+            <div class="jq" id="jevQuestions"></div>
+          </div>
+        </section>
+
+        <section class="view" data-view="calibration" hidden>
+          <div class="panel">
+            <div class="phead"><h2>Your Labels</h2></div>
+            <p class="sub">Labelling happens next to each prompt in <a class="link" href="#prompts">Prompts</a>, where the comparison with the model is shown too. Labels are a local calibration tool and are never published. Agreeing with your own labels tunes the model to your judgement; it doesn't show the estimate measures productive struggle. That needs outside evidence, like observed behaviour or a reviewer's labels.</p>
+          </div>
+        </section>
+
+        <section class="view" data-view="privacy" hidden>
+          <div class="panel evidence" id="privacyPanel"></div>
+        </section>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="tip"></div>
+
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const NS = "http://www.w3.org/2000/svg";
+let data = null;
+
+function fmtHM(s) {
+  if (s > 0 && s < 59.5) return `${Math.round(s)}s`;
+  const m = Math.round(s / 60);
+  return m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m` : `${m}m`;
+}
+function fmtDur(s) {
+  if (s == null) return "–";
+  s = Math.round(s);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ${String(Math.floor(s % 3600 / 60)).padStart(2, "0")}m`;
+  return `${(s / 86400).toFixed(1)}d`;
+}
+function median(xs) {
+  if (!xs.length) return null;
+  const a = [...xs].sort((x, y) => x - y), m = a.length >> 1;
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+function niceStep(max, ticks) {
+  const raw = max / ticks, p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p;
+}
+
+// ---------- tooltip ----------
+const tip = $("#tip");
+document.addEventListener("mousemove", (ev) => {
+  const t = ev.target.closest && ev.target.closest("[data-tip]");
+  if (!t) { tip.style.display = "none"; return; }
+  tip.textContent = t.getAttribute("data-tip");
+  tip.style.display = "block";
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  let x = ev.clientX + 14, y = ev.clientY + 14;
+  if (x + w > innerWidth - 8) x = ev.clientX - w - 14;
+  if (y + h > innerHeight - 8) y = ev.clientY - h - 14;
+  tip.style.left = x + "px"; tip.style.top = y + "px";
+});
+
+// ---------- data ----------
+// Served by `aitrack serve` (live), or published as a snapshot with data.json beside the page.
+const STATIC = window.AITRACK_STATIC === true;
+let SNAP = null;
+async function api(path) {
+  if (STATIC) {
+    if (!SNAP) SNAP = await (await fetch("data.json")).json();
+    if (!(path in SNAP)) throw new Error("Not in this snapshot: " + path);
+    return SNAP[path];
+  }
+  return (await fetch(path)).json();
+}
+async function init() {
+  const sources = await api("/api/sources");
+  const sel = $("#source");
+  sel.innerHTML = sources.map((s, i) => `<option value="${i}">${esc(s.label)}</option>`).join("");
+  if (!sources.length) { $("#measures").innerHTML = `<p class="empty">No logs found yet.</p>`; return; }
+  const want = new URLSearchParams(location.search).get("source");
+  if (want !== null && want < sources.length) sel.value = want;
+  sel.onchange = () => {
+    $("#project").value = "";
+    if (!STATIC) try { history.replaceState(null, "", `?source=${sel.value}`); } catch (e) { /* not allowed here */ }
+    load();
+  };
+  $("#project").onchange = () => { render(); loadReplays(); renderJev(); promptLimit = 60; renderPrompts(); };
+  await load();
+  if (!STATIC) setInterval(load, 15000);
+}
+
+async function load() {
+  try {
+    data = await api(`/api/data?source=${$("#source").value}`);
+    if (data.error) throw new Error(data.error);
+    const projects = [...new Set(data.rows.map((r) => r.project))].sort();
+    const ps = $("#project"), cur = ps.value;
+    ps.innerHTML = `<option value="">All projects</option>` +
+      projects.map((p) => `<option${p === cur ? " selected" : ""}>${esc(p)}</option>`).join("");
+    $("#updated").textContent = STATIC && data.snapshot_at
+      ? `snapshot from ${data.snapshot_at}` : `updated ${new Date().toLocaleTimeString()}`;
+    render();
+    loadReplays();
+    loadJev();
+    loadPrompts();
+  } catch (e) {
+    $("#updated").innerHTML = `<span class="err">${esc(e.message)}</span>`;
+  }
+}
+
+function render() {
+  const proj = $("#project").value;
+  const rows = data.rows.filter((r) => (!proj || r.project === proj) && inRange(r.day));
+  renderDaily(rows);
+  renderProjects(rows);
+  renderReplies(rows);
+  renderTable(rows);
+  renderOverview();
+}
+
+// ---------- tiles ----------
+function renderTiles(rows) {
+  const sum = (k) => rows.reduce((a, r) => a + (r[k] || 0), 0);
+  const you = sum("you_s"), ai = sum("ai_only_s"), total = you + ai;
+  const replies = rows.flatMap((r) => r.replies || []);
+  const kept = replies.filter((x) => !x.break);
+  const fast = replies.filter((x) => x.fast).length;
+  const days = new Set(rows.filter((r) => r.active_s > 0).map((r) => r.day)).size;
+  const tiles = [
+    ["Total time", fmtHM(total), `${days} day${days === 1 ? "" : "s"} with activity`],
+    ["You", fmtHM(you), total ? `${Math.round(100 * you / total)}% of total` : "–"],
+    ["AI alone", fmtHM(ai), total ? `${Math.round(100 * ai / total)}% of total` : "–"],
+    ["Prompts", sum("prompts").toLocaleString(), `${sum("prompt_chars").toLocaleString()} chars typed`],
+    ["AI turns", sum("cycles").toLocaleString(), sum("interrupted") ? `${sum("interrupted")} interrupted` : "none interrupted"],
+    sum("typed_prompts")
+      ? ["Typing", fmtDur(sum("typing_s")), `${sum("typed_prompts")} prompt${sum("typed_prompts") === 1 ? "" : "s"} · ${sum("fixes")} fixes · ${sum("rewrites")} rewrites`]
+      : ["Typing", "–", "not recorded for this data"],
+    ["Median reply", fmtDur(median(kept.map((x) => x.gap_s))),
+     kept.length ? `read ~${fmtDur(median(kept.map((x) => x.read_s)))} · ${fast} fast` : "no replies yet"],
+  ];
+  $("#tiles").innerHTML = tiles.map(([l, v, n]) =>
+    `<div class="card tile"><div class="label">${l}</div><div class="value">${v}</div><div class="note">${esc(n)}</div></div>`).join("");
+}
+
+// ---------- svg helpers ----------
+function svgEl(w, h) {
+  const s = document.createElementNS(NS, "svg");
+  s.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  s.setAttribute("role", "img");
+  return s;
+}
+function roundedTop(x, y, w, h, r) {
+  // bar with 4px rounded top corners, square at the baseline
+  r = Math.min(r, w / 2, h);
+  return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
+}
+function roundedRight(x, y, w, h, r) {
+  r = Math.min(r, h / 2, w);
+  return `M${x},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h - r}Q${x + w},${y + h} ${x + w - r},${y + h}H${x}Z`;
+}
+function timeAxis(maxS) {
+  if (maxS < 120) {  // under 2 minutes: label in seconds
+    const step = niceStep(Math.max(maxS, 10), 4), top = Math.ceil(maxS / step) * step || step, ticks = [];
+    for (let v = 0; v <= top + 1e-9; v += step) ticks.push(v);
+    return { top, ticks, label: (v) => `${Math.round(v)}s` };
+  }
+  const useH = maxS >= 2 * 3600;
+  const unit = useH ? 3600 : 60;
+  const step = niceStep(Math.max(maxS / unit, 1), 4) * unit;
+  const top = Math.max(step, Math.ceil(maxS / step) * step);
+  const ticks = [];
+  for (let v = 0; v <= top + 1e-9; v += step) ticks.push(v);
+  return { top, ticks, label: (v) => useH ? `${+(v / 3600).toFixed(1)}h` : `${Math.round(v / 60)}m` };
+}
+
+// ---------- daily stacked bars ----------
+function renderDaily(rows) {
+  const box = $("#daily");
+  const byDay = new Map();
+  for (const r of rows) {
+    const d = byDay.get(r.day) || { you: 0, ai: 0, projects: [] };
+    d.you += r.you_s; d.ai += r.ai_only_s;
+    if (r.active_s > 0) d.projects.push(`${r.project} ${fmtHM(r.active_s)}`);
+    byDay.set(r.day, d);
+  }
+  if (!byDay.size) { box.innerHTML = `<p class="empty">No activity in range.</p>`; return; }
+  // continuous day range, so gaps show as gaps
+  const keys = [...byDay.keys()].sort();
+  const days = [];
+  for (let t = Date.parse(keys[0] + "T12:00:00"), end = Date.parse(keys[keys.length - 1] + "T12:00:00"); t <= end; t += 86400000) {
+    const d = new Date(t);
+    days.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+  }
+  const W = 1040, H = 240, L = 44, R = 8, T = 8, B = 26;
+  const pw = W - L - R, ph = H - T - B;
+  const max = Math.max(...days.map((d) => { const v = byDay.get(d); return v ? v.you + v.ai : 0; }), 10);
+  const ax = timeAxis(max);
+  const y = (v) => T + ph - (v / ax.top) * ph;
+  const slot = pw / days.length, bw = Math.max(2, Math.min(28, slot * 0.7));
+  const s = svgEl(W, H);
+  let g = "";
+  for (const v of ax.ticks) {
+    g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/>`;
+    g += `<text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${ax.label(v)}</text>`;
+  }
+  const labelEvery = Math.ceil(days.length / 10);
+  days.forEach((d, i) => {
+    const cx = L + slot * i + slot / 2, x = cx - bw / 2;
+    const v = byDay.get(d) || { you: 0, ai: 0, projects: [] };
+    const hy = (v.you / ax.top) * ph, ha = (v.ai / ax.top) * ph;
+    const gap = v.you > 0 && v.ai > 0 ? 2 : 0;  // 2px surface gap between stacked fills
+    if (v.ai > 0 && v.you > 0) {
+      g += `<rect x="${x}" y="${y(0) - hy}" width="${bw}" height="${hy}" fill="var(--series-1)"/>`;
+      g += `<path d="${roundedTop(x, y(0) - hy - gap - ha, bw, Math.max(ha, 0.5), 4)}" fill="var(--series-2)"/>`;
+    } else if (v.you > 0) {
+      g += `<path d="${roundedTop(x, y(0) - hy, bw, hy, 4)}" fill="var(--series-1)"/>`;
+    } else if (v.ai > 0) {
+      g += `<path d="${roundedTop(x, y(0) - ha, bw, ha, 4)}" fill="var(--series-2)"/>`;
+    }
+    if (i % labelEvery === 0) g += `<text x="${cx}" y="${H - 8}" text-anchor="middle">${d.slice(5)}</text>`;
+    const tipText = `${d}\nTotal     ${fmtHM(v.you + v.ai)}\nYou       ${fmtHM(v.you)}\nAI alone  ${fmtHM(v.ai)}` +
+      (v.projects.length ? `\n\n${v.projects.join("\n")}` : "");
+    g += `<rect class="hit" x="${L + slot * i}" y="${T}" width="${slot}" height="${ph}" data-tip="${esc(tipText)}"/>`;
+  });
+  g += `<line x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}" stroke="var(--text-muted)" stroke-opacity=".5"/>`;
+  s.innerHTML = g;
+  s.setAttribute("aria-label", "Credited time per day, you vs AI alone");
+  box.replaceChildren(s);
+}
+
+// ---------- projects: horizontal stacked bars ----------
+function renderProjects(rows) {
+  const box = $("#projects");
+  const by = new Map();
+  for (const r of rows) {
+    const p = by.get(r.project) || { you: 0, ai: 0 };
+    p.you += r.you_s; p.ai += r.ai_only_s; by.set(r.project, p);
+  }
+  let list = [...by.entries()].filter(([, v]) => v.you + v.ai >= 1).sort((a, b) => (b[1].you + b[1].ai) - (a[1].you + a[1].ai));
+  if (!list.length) { box.innerHTML = `<p class="empty">No credited time yet.</p>`; return; }
+  if (list.length > 8) {
+    const rest = list.slice(7).reduce((a, [, v]) => ({ you: a.you + v.you, ai: a.ai + v.ai }), { you: 0, ai: 0 });
+    list = [...list.slice(0, 7), [`Other (${list.length - 7})`, rest]];
+  }
+  const rowH = 30, W = 500, L = 150, R = 64;
+  const H = list.length * rowH + 4, pw = W - L - R;
+  const max = Math.max(...list.map(([, v]) => v.you + v.ai));
+  const s = svgEl(W, H);
+  let g = "";
+  list.forEach(([name, v], i) => {
+    const yy = i * rowH + 6, bh = 16;
+    const wy = (v.you / max) * pw, wa = (v.ai / max) * pw;
+    const gap = v.you > 0 && v.ai > 0 ? 2 : 0;
+    const short = name.length > 22 ? name.slice(0, 21) + "…" : name;
+    g += `<text x="${L - 10}" y="${yy + 12}" text-anchor="end" style="fill:var(--text-secondary)">${esc(short)}</text>`;
+    if (v.ai > 0) {
+      g += `<rect x="${L}" y="${yy}" width="${Math.max(wy, 0)}" height="${bh}" fill="var(--series-1)"/>`;
+      g += `<path d="${roundedRight(L + wy + gap, yy, Math.max(wa, 0.5), bh, 4)}" fill="var(--series-2)"/>`;
+    } else {
+      g += `<path d="${roundedRight(L, yy, Math.max(wy, 0.5), bh, 4)}" fill="var(--series-1)"/>`;
+    }
+    g += `<text x="${L + wy + gap + wa + 6}" y="${yy + 12}" style="fill:var(--text-primary)">${fmtHM(v.you + v.ai)}</text>`;
+    g += `<rect class="hit" x="0" y="${i * rowH}" width="${W}" height="${rowH}" data-tip="${esc(`${name}\nTotal     ${fmtHM(v.you + v.ai)}\nYou       ${fmtHM(v.you)}\nAI alone  ${fmtHM(v.ai)}`)}"/>`;
+  });
+  s.innerHTML = g;
+  s.setAttribute("aria-label", "Credited time by project");
+  box.replaceChildren(s);
+}
+
+// ---------- replies: log-log scatter ----------
+function renderReplies(rows) {
+  const box = $("#replies");
+  const pts = rows.flatMap((r) => (r.replies || []).map((x) => ({ ...x, project: r.project })))
+    .filter((p) => p.read_s >= 1 && p.gap_s >= 1);
+  if (!pts.length) { box.innerHTML = `<p class="empty">No replies with a read time yet.</p>`; return; }
+  const W = 500, H = 340, L = 46, R = 10, T = 10, B = 34;
+  const pw = W - L - R, ph = H - T - B;
+  const ticks = [[1, "1s"], [10, "10s"], [60, "1m"], [600, "10m"], [3600, "1h"], [36000, "10h"], [86400 * 4, "4d"]];
+  const hi = Math.max(...pts.map((p) => Math.max(p.gap_s, p.read_s)), 600);
+  const used = ticks.filter(([v], i) => i === 0 || ticks[i - 1][0] < hi);
+  const lmax = Math.log10(used[used.length - 1][0]);
+  const X = (v) => L + (Math.log10(Math.max(v, 1)) / lmax) * pw;
+  const Y = (v) => T + ph - (Math.log10(Math.max(v, 1)) / lmax) * ph;
+  const top = used[used.length - 1][0];
+  const s = svgEl(W, H);
+  let g = "";
+  // fast zone: read >= 30s and gap < 0.25 * read
+  g += `<path d="M${X(30)},${Y(1)} L${X(30)},${Y(7.5)} L${X(top)},${Y(top * 0.25)} L${X(top)},${Y(1)} Z" fill="var(--zone)"/>`;
+  for (const [v, lab] of used) {
+    g += `<line x1="${X(v)}" x2="${X(v)}" y1="${T}" y2="${T + ph}" stroke="var(--grid)"/>`;
+    g += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--grid)"/>`;
+    g += `<text x="${X(v)}" y="${H - 18}" text-anchor="middle">${lab}</text>`;
+    g += `<text x="${L - 6}" y="${Y(v) + 4}" text-anchor="end">${lab}</text>`;
+  }
+  g += `<line x1="${X(1)}" y1="${Y(1)}" x2="${X(top)}" y2="${Y(top)}" stroke="var(--text-muted)" stroke-dasharray="4 4"/>`;
+  g += `<text x="${X(top) - 4}" y="${Y(top) + 14}" text-anchor="end">reply = read time</text>`;
+  g += `<text x="${(L + W - R) / 2}" y="${H - 2}" text-anchor="middle">estimated read time →</text>`;
+  g += `<text transform="translate(11 ${T + ph / 2}) rotate(-90)" text-anchor="middle">your reply time →</text>`;
+  for (const p of pts) {
+    const cx = X(p.read_s), cy = Y(p.gap_s);
+    const kind = p.break ? "break" : p.fast ? "fast" : "ok";
+    const tipText = `${p.at.slice(0, 16).replace("T", " ")}  ${p.project}\nReply   ${fmtDur(p.gap_s)}\nRead    ${fmtDur(p.read_s)}\nRatio   ${(p.gap_s / p.read_s).toFixed(1)}x` +
+      (kind === "fast" ? "\nFaster than reading" : kind === "break" ? "\nBreak" : "");
+    if (kind === "break") {
+      g += `<circle cx="${cx}" cy="${cy}" r="5" fill="none" stroke="var(--text-muted)" stroke-width="2"/>`;
+    } else {
+      g += `<circle cx="${cx}" cy="${cy}" r="5" fill="var(${kind === "fast" ? "--series-2" : "--series-1"})" stroke="var(--surface-1)" stroke-width="2"/>`;
+    }
+    g += `<circle class="hit" cx="${cx}" cy="${cy}" r="11" data-tip="${esc(tipText)}"/>`;
+  }
+  s.innerHTML = g;
+  s.setAttribute("aria-label", "Reply time against estimated read time, log scale");
+  box.replaceChildren(s);
+}
+
+// ---------- table ----------
+function renderTable(rows) {
+  const box = $("#table");
+  const list = rows.filter((r) => r.active_s > 0 || r.prompts > 0).sort((a, b) => b.day.localeCompare(a.day) || b.active_s - a.active_s);
+  $("#tablenote").textContent = `${list.length} row${list.length === 1 ? "" : "s"} · idle cutoff ${data.idle_min} min · ${data.file}`;
+  if (!list.length) { box.innerHTML = `<p class="empty">Nothing yet.</p>`; return; }
+  const lines = (r) => Object.values(r.files || {}).reduce((a, f) => [a[0] + f.added, a[1] + f.removed], [0, 0]);
+  box.innerHTML = `<table><thead><tr>
+    <th>Day</th><th>Project</th><th>Time</th><th>You</th><th>AI alone</th><th>Prompts</th><th>AI turns</th>
+    <th>Typing</th><th>Fixes</th><th>Rewrites</th><th>Abandoned</th>
+    <th>Median reply</th><th>Median read</th><th>Fast</th><th>Breaks</th><th>AI lines</th></tr></thead><tbody>` +
+    list.map((r) => {
+      const [a, d] = lines(r);
+      return `<tr><td>${r.day}</td><td>${esc(r.project)}</td><td>${fmtHM(r.active_s)}</td><td>${fmtHM(r.you_s)}</td>
+        <td>${fmtHM(r.ai_only_s)}</td><td>${r.prompts}</td><td>${r.cycles}</td>
+        <td>${r.typed_prompts ? fmtDur(r.typing_s) : ""}</td><td>${r.typed_prompts ? r.fixes : ""}</td>
+        <td>${r.typed_prompts ? r.rewrites : ""}</td><td>${r.drafts_abandoned || ""}</td>
+        <td>${fmtDur(r.median_user_response_s)}</td><td>${fmtDur(r.median_read_s)}</td>
+        <td>${r.fast_replies || ""}</td><td>${r.breaks || ""}</td><td>${a || d ? `+${a} / −${d}` : ""}</td></tr>`;
+    }).join("") + `</tbody></table>`;
+}
+
+// ---------- Jev prompt patterns ----------
+const PATTERN_NAMES = {
+  direct: "Directing", review_pushback: "Reviewing / correcting", delegate: "Delegating",
+  debug_handoff: "Handing errors back", understand_ai_work: "Asking about AI's work", ask_info: "Asking for information",
+  concept: "Conceptual question", code_and_explain: "Code + explanation", approve: "Approving / continuing",
+  other: "Other",
+};
+const PATTERN_HELP = {
+  direct: "gives specific technical direction from their own understanding",
+  review_pushback: "points out a mistake in the AI's work, rejects or corrects it",
+  delegate: "hands a task over with little reasoning of their own",
+  debug_handoff: "passes an error back to the AI without their own diagnosis",
+  understand_ai_work: "asks about code the AI just wrote, to understand it",
+  ask_info: "asks the AI to find, measure or report something",
+  concept: "asks how or why something works",
+  code_and_explain: "asks for code with an explanation",
+  approve: "only approves or continues",
+  other: "none of these",
+};
+let jevRows = null, jevIdle = 15;
+
+let jevConfig = null;
+// Plain-language version of each Jev question, and what its answer does to the hours.
+const JEV_EXPLAIN = {
+  pattern: {
+    title: "What kind of prompt is it?",
+    used: "Decides the credit share. Learning kinds earn full credit, because asking and checking is learning time; every other kind earns a share set by own thinking. The share is averaged over Jev's probabilities, so an unsure label gets a blended share.",
+  },
+  understanding: {
+    title: "Is the person trying to understand something?",
+    used: "Shown for context only; not used in the hours yet.",
+  },
+  read_previous: {
+    title: "Did the prompt engage with the AI's last reply?",
+    used: "Scales reading time: from 30% of the estimated read time (no sign they read it) to 100% (refers to, builds on or questions it).",
+  },
+  pasted_output: {
+    title: "Is it mostly pasted output?",
+    used: "Shown for context only; not used in the hours yet.",
+  },
+  complexity: {
+    title: "How hard is the problem?",
+    used: "Adds thinking time: each point adds the \"Thinking time per point\" slider's seconds. Judges the problem, not the person's skill.",
+  },
+  own_thinking: {
+    title: "How much of their own reasoning does it show?",
+    used: "Adds thinking time like complexity, and sets the share for non-learning prompts: full credit at the \"Full credit from\" slider, proportionally less below.",
+  },
+};
+
+async function loadJevConfig() {
+  if (jevConfig) return;
+  try { jevConfig = await api("/api/jevconfig"); } catch (e) { jevConfig = null; }
+  if (!jevConfig) return;
+  if (jevConfig.think_per != null) {
+    // personal calibration from presence data (aitrack presence --fit --apply)
+    $("#thinkPer").value = jevConfig.think_per;
+    $("#thinkPer").dispatchEvent(new Event("input"));
+  }
+  const q = jevConfig.questions;
+  $("#jevHow").innerHTML = `
+    <div class="steps">
+      <div><b>1 · What Jev sees</b><span>The prompt's text (first ${jevConfig.max_prompt.toLocaleString()} characters), the end of the AI's previous reply (last ${jevConfig.max_prev.toLocaleString()} characters) and the person's previous prompt (first ${(jevConfig.max_prev_prompt || 600).toLocaleString()} characters), with passwords and keys removed. Never timing, typing or sizes.</span></div>
+      <div><b>2 · What it answers</b><span>The ${Object.keys(q).length} questions below, all at once, each with a probability or score.</span></div>
+      <div><b>3 · How that becomes time</b><span>Your time before a prompt = reading × engagement + (complexity + own thinking) × seconds per point + writing. The prompt's kind then decides what share of that counts as struggle.</span></div>
+    </div>`;
+  const opt = (rows) => `<div class="tablewrap"><table>${rows.map(([k, d]) => `<tr><td>${esc(k)}</td><td>${esc(d)}</td></tr>`).join("")}</table></div>`;
+  const exact = (x) => `<details class="exact"><summary>Show exact wording sent to Jev</summary><p>${esc(x.instructions)}</p></details>`;
+  const card = (id, x, body) => {
+    const e = JEV_EXPLAIN[id] || { title: id.replace(/_/g, " "), used: "" };
+    const kind = { noul: "yes / no", choice: "pick one", score: x.type === "score" ? `score 0–${x.criteria.length - 1}` : "" }[x.type] || x.type;
+    return `<div class="jcard"><h3>${esc(e.title)} <span class="chip">${esc(kind)}</span></h3>` +
+      (e.used ? `<p class="used"><b>Used for:</b> ${esc(e.used)}</p>` : "") + (body || "") + exact(x) + `</div>`;
+  };
+  let html = "";
+  if (q.pattern) {
+    const crit = Object.entries(q.pattern.criteria);
+    const full = crit.filter(([k]) => COUNTS.has(k)), rest = crit.filter(([k]) => !COUNTS.has(k));
+    html += card("pattern", q.pattern,
+      `<div class="groups"><div><p class="glabel">Learning kinds: full credit</p>${opt(full.map(([k, d]) => [PATTERN_NAMES[k] || k, d]))}</div>` +
+      `<div><p class="glabel">Other kinds: 0–100% by own thinking</p>${opt(rest.map(([k, d]) => [PATTERN_NAMES[k] || k, d]))}</div></div>`);
+  }
+  html += `<div class="jgrid">`;
+  // Questions that change the hours first, context-only ones after.
+  const order = ["read_previous", "complexity", "own_thinking"];
+  const rank = (id) => (order.includes(id) ? order.indexOf(id) : 10);
+  for (const [id, x] of Object.entries(q).sort((a, b) => rank(a[0]) - rank(b[0]))) {
+    if (id === "pattern") continue;
+    const body = x.type === "score" ? opt(x.criteria.map((d, i) => [String(i), d])) : "";
+    html += card(id, x, body);
+  }
+  html += `</div>`;
+  $("#jevQuestions").innerHTML = html;
+}
+
+async function loadJev() {
+  loadJevConfig();
+  try { const j = await api(`/api/jev?source=${$("#source").value}`); jevRows = j.rows; jevIdle = j.idle_min || 15; } catch (e) { jevRows = null; }
+  renderJev();
+}
+
+function hbars(list, fmtVal, color, tipFn) {
+  // list: [[label, value, extraText]]
+  const rowH = 30, W = 500, L = 170, R = 120, H = list.length * rowH + 4, pw = W - L - R;
+  const max = Math.max(...list.map((x) => x[1]), 1e-9);
+  let g = "";
+  list.forEach(([name, v, extra, key], i) => {
+    const yy = i * rowH + 6, w = Math.max((v / max) * pw, v > 0 ? 2 : 0);
+    g += `<text x="${L - 10}" y="${yy + 12}" text-anchor="end" style="fill:var(--text-secondary)">${esc(name)}</text>`;
+    if (w > 0) g += `<path d="${roundedRight(L, yy, w, 16, 4)}" fill="var(${color})"/>`;
+    g += `<text x="${L + w + 6}" y="${yy + 12}" style="fill:var(--text-primary)">${esc(fmtVal(v))}${extra ? ` <tspan style="fill:var(--text-muted)">${esc(extra)}</tspan>` : ""}</text>`;
+    g += `<rect class="hit" x="0" y="${i * rowH}" width="${W}" height="${rowH}" data-tip="${esc(tipFn(key))}"/>`;
+  });
+  const s = svgEl(W, H);
+  s.innerHTML = g;
+  return s;
+}
+
+const COUNTS = new Set(["concept", "understand_ai_work", "code_and_explain", "review_pushback"]);
+
+function renderStruggle(rows) {
+  $("#thinkCutVal").textContent = `${Number($("#thinkCut").value).toFixed(1)} / 3`;
+  $("#thinkPerVal").textContent = `${Number($("#thinkPer").value)} s`;
+  $("#floorCutVal").textContent = `${Math.round(Number($("#floorCut").value) * 100)}%`;
+  const proj0 = $("#project").value;
+  rows = promptRows.filter((r) => r.pattern && (!proj0 || r.project === proj0) && inRange(r.day));
+  let yes = 0, counted = 0, nYes = 0, nNo = 0;
+  for (const r of rows) {
+    const t = allocYou(r);
+    const w = creditWeight(r);
+    counted += t; yes += t * w;
+    if (w >= 0.5) nYes++; else nNo++;
+  }
+  const proj = $("#project").value;
+  const ai = promptRows.filter((r) => (!proj || r.project === proj) && inRange(r.day)).reduce((a, r) => a + allocAi(r), 0);
+  const no = counted - yes, total = counted + ai;  // both already allocated, so this never exceeds real time
+  $("#struggleTiles").innerHTML = [
+    ["Estimated effort", fmtHM(yes), `${nYes} prompts earn half or more · unvalidated estimate`],
+    ["Your time, no credit", fmtHM(no), `counted as your time, not as effort`],
+    ["AI working", fmtHM(ai), "never counts"],
+    ["Observed", fmtHM(total), total ? `${Math.round(100 * yes / total)}% is estimated effort; idle time between prompts isn't counted` : "–"],
+  ].map(([l, v, n]) => `<div class="card tile"><div class="label">${l}</div><div class="value">${v}</div><div class="note">${esc(n)}</div></div>`).join("");
+  const W = 1000, H = 22, segs = [[yes, "var(--effort)", "Estimated effort"], [no, "var(--text-muted)", "Your time, no credit"], [ai, "var(--series-2)", "AI working"]];
+  let x = 0, g = "";
+  for (const [v, c, label] of segs) {
+    const w = total ? (v / total) * W : 0;
+    if (w > 0) g += `<rect x="${x}" y="0" width="${Math.max(w - 2, 1)}" height="${H}" rx="4" fill="${c}" data-tip="${esc(`${label}  ${fmtHM(v)}`)}"/>`;
+    x += w;
+  }
+  const s = svgEl(W, H); s.innerHTML = g; s.setAttribute("aria-label", "Split of tracked time");
+  $("#struggleBar").replaceChildren(s);
+}
+
+function renderJev() {
+  const wrap = $("#jevWrap");
+  $("#noJev").hidden = !!(jevRows && jevRows.length);
+  if (!jevRows || !jevRows.length) { wrap.style.display = "none"; return; }
+  const proj = $("#project").value;
+  const rows = jevRows.filter((r) => (!proj || r.project === proj) && inRange(r.day));
+  wrap.style.display = "";
+  renderStruggle(rows);
+  $("#thinkCut").oninput = $("#thinkPer").oninput = $("#floorCut").oninput = () => { renderStruggle(jevRows.filter((r) => (!proj || r.project === proj) && inRange(r.day))); renderPrompts(); renderOverview(); };
+  const by = new Map();
+  for (const r of rows) { if (!by.has(r.pattern)) by.set(r.pattern, []); by.get(r.pattern).push(r); }
+  const confident = rows.filter((r) => r.pattern_confidence >= 0.6).length;
+  const model = rows.find((r) => r.model)?.model || "Jev";
+  $("#jevNote").textContent = `${rows.length} prompts judged by ${model} from their text only (no timing or sizes). ` +
+    `Confident (≥ 0.6) on ${confident} of ${rows.length}.`;
+
+  const stats = [...by.entries()].map(([p, g]) => ({
+    p, n: g.length,
+    conf: median(g.map((x) => x.pattern_confidence)),
+    thinking: median(g.map((x) => x.own_thinking)),
+    understanding: g.filter((x) => x.understanding >= 0.5).length,
+    typed: median(g.map((x) => x.typed)),
+    pasted: median(g.map((x) => x.pasted)),
+    aiS: g.reduce((a, x) => a + (x.ai_s || 0), 0),
+    aiMed: median(g.filter((x) => x.ai_s != null).map((x) => x.ai_s)),
+    reply: median(g.filter((x) => x.gap_s != null && !x.break).map((x) => x.gap_s)),
+    replyRead: median(g.filter((x) => x.gap_s != null && !x.break && x.read_s).map((x) => x.gap_s / x.read_s)),
+  })).sort((a, b) => b.n - a.n);
+  const tip = (p) => {
+    const s = stats.find((x) => x.p === p);
+    return `${PATTERN_NAMES[p] || p}: ${PATTERN_HELP[p] || ""}\nPrompts        ${s.n}\nOwn thinking   ${s.thinking.toFixed(1)} / 3\n` +
+      `Jev confidence ${s.conf.toFixed(2)}\nAI time after  ${fmtHM(s.aiS)}`;
+  };
+  $("#jevPatterns").replaceChildren(hbars(stats.map((s) => [PATTERN_NAMES[s.p] || s.p, s.n, `thinking ${s.thinking.toFixed(1)}/3`, s.p]),
+    (v) => String(v), "--series-1", tip));
+  const byAi = [...stats].sort((a, b) => b.aiS - a.aiS).filter((s) => s.aiS > 0);
+  const totalAi = byAi.reduce((a, s) => a + s.aiS, 0);
+  $("#jevAi").replaceChildren(hbars(byAi.map((s) => [PATTERN_NAMES[s.p] || s.p, s.aiS, `${Math.round(100 * s.aiS / totalAi)}%`, s.p]),
+    (v) => fmtHM(v), "--series-2", tip));
+
+  $("#jevTable").innerHTML = `<table><thead><tr><th>Pattern</th><th>What it means</th><th>Prompts</th><th>Own thinking</th>
+    <th>Trying to understand</th><th>Jev confidence</th><th>Typed chars</th><th>Pasted chars</th><th>Reply time</th>
+    <th>Reply / read</th><th>AI turn</th><th>AI time total</th></tr></thead><tbody>` +
+    stats.map((s) => `<tr><td>${esc(PATTERN_NAMES[s.p] || s.p)}</td><td>${esc(PATTERN_HELP[s.p] || "")}</td><td>${s.n}</td>
+      <td>${s.thinking.toFixed(1)}</td><td>${s.understanding} of ${s.n}</td><td>${s.conf.toFixed(2)}</td>
+      <td>${Math.round(s.typed)}</td><td>${Math.round(s.pasted)}</td><td>${fmtDur(s.reply)}</td>
+      <td>${s.replyRead == null ? "–" : s.replyRead.toFixed(1) + "×"}</td><td>${fmtDur(s.aiMed)}</td><td>${fmtHM(s.aiS)}</td></tr>`).join("") +
+    `</tbody></table>`;
+}
+
+// ---------- prompts and their time ----------
+let promptRows = [], promptLimit = 60, promptPace = null;
+
+async function loadPrompts() {
+  try {
+    const j = await api(`/api/prompts?source=${$("#source").value}`);
+    promptRows = j.rows || [];
+    promptVersion++;
+    promptPace = j.pace ? { cps: j.pace, n: j.pace_samples, dflt: j.pace_default } : null;
+  } catch (e) { promptRows = []; promptPace = null; }
+  promptLimit = 60;
+  renderPrompts();
+  renderOverview();
+}
+
+// Your time before a judged prompt, built from what the prompt shows:
+// reading (scaled by engagement with the reply) + thinking ((complexity + own thinking) x seconds per point)
+// + writing, never more than the time actually available. null for prompts Jev hasn't judged.
+function dynParts(r, perOverride) {
+  if (!r.pattern) return null;
+  const per = perOverride != null ? perOverride : Number($("#thinkPer").value);
+  const engage = 0.3 + 0.7 * (r.read_previous || 0);
+  const read = r.gap_s == null ? 0 : Math.min(r.read_s || 0, jevIdle * 60) * engage;
+  const think = per * ((r.complexity || 0) + (r.own_thinking || 0));
+  const write = r.compose_s || 0;
+  let you, avail = null;
+  if (r.gap_s == null) {
+    // first prompt of a session: thinking can't exceed what the plain rule allowed before writing
+    you = write + Math.min(think, Math.max(0, r.you_before_s - write));
+  } else {
+    avail = r.present_s != null ? r.present_s : r.gap_s;
+    const rt = Math.min(read + think, avail);
+    // Recorded typing counts in full, even typed while the AI was still working; estimated writing must fit the gap.
+    you = rt + (r.typing_ms != null ? write : Math.min(write, Math.max(0, r.gap_s - rt)));
+  }
+  return { read, think, write, you, engage, avail, per };
+}
+function youTime(r, per) { const d = dynParts(r, per); return d ? d.you : (r.you_before_s || 0); }
+
+// ---------- one overlap rule for every total ----------
+// Your time before a prompt is an interval ending at the prompt; the agent's turn is an interval starting
+// at it. Intervals from parallel sessions can overlap; each moment is credited once: your time beats the
+// agent's, then the interval that started most recently wins. That's the Python time model's rule, so
+// your time plus agent time never exceeds the real time that passed. Runs over all prompts of the source, before any project or
+// range filter, so filtering never creates or loses time.
+let promptVersion = 0;
+const _alloc = new Map();
+function allocMap(per) {
+  if (per == null) per = Number($("#thinkPer").value);
+  const key = `${promptVersion}|${per}|${Number($("#thinkCut").value)}`;
+  if (_alloc.has(key)) return _alloc.get(key);
+  const iv = [];
+  for (const r of promptRows) {
+    const e = Date.parse(r.at), y = youTime(r, per);
+    if (!e) continue;
+    if (y > 0) iv.push({ r, you: true, s: e - y * 1000, e });
+    if (r.ai_s > 0) iv.push({ r, you: false, s: e, e: e + r.ai_s * 1000 });
+  }
+  const pts = [...new Set(iv.flatMap((x) => [x.s, x.e]))].sort((a, b) => a - b);
+  const byStart = iv.slice().sort((a, b) => a.s - b.s);
+  const map = new Map(), ai = new Map();
+  let i = 0, active = [];
+  for (let k = 0; k + 1 < pts.length; k++) {
+    const t0 = pts[k], t1 = pts[k + 1];
+    while (i < byStart.length && byStart[i].s <= t0) active.push(byStart[i++]);
+    active = active.filter((x) => x.e > t0);
+    if (!active.length) continue;
+    let win = active[0];
+    for (const x of active) {
+      if (x.you !== win.you) { if (x.you) win = x; continue; }
+      if (x.s > win.s || (x.s === win.s && x.e > win.e)) win = x;
+    }
+    const m = win.you ? map : ai;
+    m.set(win.r, (m.get(win.r) || 0) + (t1 - t0) / 1000);
+  }
+  map.ai = ai;
+  _alloc.set(key, map);
+  if (_alloc.size > 12) _alloc.delete(_alloc.keys().next().value);
+  return map;
+}
+function allocYou(r, per) { return allocMap(per).get(r) || 0; }
+function allocAi(r) { return allocMap().ai.get(r) || 0; }  // agent time not overlapped by your time anywhere
+
+// Share of a prompt's "you before" time that counts as struggle.
+// Learning kinds (questions, asking about the AI's work, code + explanation, reviewing) earn at least the
+// "learning kinds" slider (default 100%); every other kind earns own thinking / the slider, capped at 100%.
+// The share is averaged over Jev's probabilities for every kind, so an unsure label gives a blended share.
+function kindWeight(kind, thinking, full, floor) {
+  const scaled = Math.max(0, Math.min(1, thinking / full));
+  return COUNTS.has(kind) ? Math.max(floor, scaled) : scaled;
+}
+function weightWith(r, full, floor) {
+  if (!r.pattern) return null;
+  const th = r.own_thinking || 0;
+  const probs = Object.entries(r.pattern_probs || {});
+  const total = probs.reduce((a, [, p]) => a + p, 0);
+  if (!total) return kindWeight(r.pattern, th, full, floor);
+  return probs.reduce((a, [k, p]) => a + p * kindWeight(k, th, full, floor), 0) / total;
+}
+function creditWeight(r) {
+  return weightWith(r, Number($("#thinkCut").value) || 2, Number($("#floorCut").value));
+}
+
+function timeBar(you, ai, scale) {
+  const W = 150, H = 12, wy = Math.min(you / scale, 1) * W, wa = Math.min(ai / scale, 1 - wy / W) * W;
+  const over = you + ai > scale;
+  let g = `<rect x="0" y="0" width="${W}" height="${H}" rx="3" fill="var(--grid)"/>`;
+  if (wy > 0) g += `<rect x="0" y="0" width="${Math.max(wy, 2)}" height="${H}" rx="3" fill="var(--series-1)"/>`;
+  if (wa > 0) g += `<rect x="${wy + (wy > 0 ? 2 : 0)}" y="0" width="${Math.max(wa - (wy > 0 ? 2 : 0), 2)}" height="${H}" rx="3" fill="var(--series-2)"/>`;
+  return `<svg viewBox="0 0 ${W + 10} ${H}" width="${W + 10}" height="${H}" style="display:inline-block;vertical-align:middle">${g}` +
+    (over ? `<text x="${W + 2}" y="${H - 2}" style="font-size:11px">›</text>` : "") + `</svg>`;
+}
+
+function renderPrompts() {
+  const box = $("#promptTable"), more = $("#promptMore");
+  const proj = $("#project").value;
+  const rows = promptRows.filter((r) => (!proj || r.project === proj) && inRange(r.day)).slice().reverse();
+  if (!rows.length) { box.innerHTML = `<p class="empty">No prompts here.</p>`; more.innerHTML = ""; return; }
+  // Bars share one scale: the 90th percentile of prompt totals, so one 5-hour run doesn't flatten the rest.
+  const totals = rows.map((r) => allocYou(r) + allocAi(r)).sort((a, b) => a - b);
+  const scale = Math.max(totals[Math.floor(totals.length * 0.9)] || 1, 60);
+  const shown = rows.slice(0, promptLimit);
+  box.innerHTML = `<table class="ptable"><thead><tr><th>When</th><th>Project</th><th>Prompt and what it was (Jev)</th>
+    <th>Time it caused</th><th>Typing</th><th>AI changed</th><th>Est. effort</th><th>Replay</th></tr></thead><tbody>` +
+    shown.map((r) => {
+      const w = creditWeight(r), d = dynParts(r), you = r.pattern ? allocYou(r) : (r.you_before_s || 0);
+      const text = r.text ? `<div class="ptext" title="Click to expand">${esc(r.text)}</div>` : "";
+      const what = text + (r.pattern
+        ? `<div class="decision">${decisionLine(r, d, w, you)}</div><details><summary>All of Jev's answers</summary>${whyJev(r)}</details>`
+        : `<span class="updated">not judged by Jev</span>`);
+      const typing = r.typing_ms != null
+        ? `${fmtDur(r.typing_ms / 1000)} · ${r.keys_typed} keys${r.fixes ? ` · ${r.fixes} fixes` : ""}${r.rewrites ? ` · ${r.rewrites} rewrites` : ""}` +
+          (r.pace ? `<span class="tsplit">${r.pace.toFixed(1)} chars/s${promptPace && promptPace.n >= 3 && r.keys_typed >= 20 && r.pace < 0.6 * promptPace.cps ? " · slow, careful" : ""}</span>` : "")
+        : `<span class="updated">${r.typed ? `${r.typed} chars` : "–"}</span>`;
+      const when = `${r.at.slice(5, 10)} ${r.at.slice(11, 16)}`;
+      const youTip = (d
+        ? `Reading ${fmtDur(d.read)} (${Math.round(d.engage * 100)}% of ~${fmtDur(r.read_s || 0)}, by engagement with the reply)\n` +
+          `Thinking ${fmtDur(d.think)} ((complexity ${(r.complexity || 0).toFixed(1)} + own thinking ${(r.own_thinking || 0).toFixed(1)}) × ${d.per} s)\n` +
+          `Writing ${fmtDur(d.write)}\n`
+        : "") +
+        (r.gap_s == null ? "First prompt of the session" : `${fmtDur(r.gap_s)} since the AI finished; counted ${fmtDur(you)}`) +
+        (r.away ? "\nClaude Code logged that you were away" : "");
+      return `<tr><td>${when}</td><td>${esc(r.project || "?")}</td><td class="what">${what}</td>
+        <td class="time" data-tip="${esc(`${youTip}\nAI after ${r.ai_s == null ? "–" : fmtDur(r.ai_s)}`)}">${timeBar(you, r.ai_s || 0, scale)}
+          <span class="tsplit">you ${fmtDur(you)}${r.gap_s != null && r.gap_s > you + 5 ? ` of ${fmtDur(r.gap_s)}` : ""}${r.away ? " · was away" : ""} · AI ${r.ai_s == null ? "–" : fmtDur(r.ai_s)}</span></td>
+        <td>${typing}</td>
+        <td>${r.lines ? `${r.lines} lines` : ""}</td>
+        <td>${w === null ? "" : `<span class="chip${w > 0 ? " yes" : ""}" data-tip="${esc(`${Math.round(w * 100)}% of ${fmtDur(you)} = ${fmtDur(you * w)} credited`)}">${Math.round(w * 100)}% · ${fmtDur(you * w)}</span>`}${labelButtons(r)}</td>
+        <td>${r.replay ? `<button data-replay-at="${esc(r.at)}">Replay</button>` : ""}</td></tr>`;
+    }).join("") + `</tbody></table>`;
+  const paceNote = promptPace
+    ? (promptPace.n >= 3
+      ? `Writing time for prompts without recorded keystrokes is estimated at this person's own median pace: ${promptPace.cps.toFixed(1)} chars/s, from ${promptPace.n} typed prompts.`
+      : `No recorded typing here, so writing time is estimated at a default ${promptPace.dflt} chars/s (about 40 words a minute).`)
+    : "";
+  more.innerHTML = (paceNote ? `<p class="sub">${esc(paceNote)}</p>` : "") +
+    (rows.length > shown.length ? `<button id="promptMoreBtn">Show all ${rows.length} prompts</button>` : "");
+  if ($("#promptMoreBtn")) $("#promptMoreBtn").onclick = () => { promptLimit = Infinity; renderPrompts(); };
+  box.querySelectorAll("[data-replay-at]").forEach((b) => b.onclick = () => openReplayAt(b.getAttribute("data-replay-at")));
+  box.querySelectorAll(".ptext").forEach((t) => t.onclick = () => t.classList.toggle("open"));
+  box.querySelectorAll("[data-label]").forEach((b) => b.onclick = () => setLabel(b.getAttribute("data-pid"), b.getAttribute("data-label")));
+  renderLabelStats();
+}
+
+// Jev's decision for one prompt, and how it turned into time, as three short lines.
+function decisionLine(r, d, w, you) {
+  const probs = Object.entries(r.pattern_probs || {}).sort((a, b) => b[1] - a[1]);
+  const topP = probs.length ? probs[0][1] : (r.pattern_confidence || 0);
+  const next = probs[1] && probs[1][1] >= 0.1 ? ` <span class="updated">(next: ${esc(PATTERN_NAMES[probs[1][0]] || probs[1][0])} ${Math.round(probs[1][1] * 100)}%)</span>` : "";
+  const kind = `<b>${esc(PATTERN_NAMES[r.pattern] || r.pattern)}</b> ${Math.round(topP * 100)}%${next}` +
+    ` <span class="chip${COUNTS.has(r.pattern) ? " yes" : ""}">${COUNTS.has(r.pattern) ? "learning kind" : "credit by own thinking"}</span>`;
+  const facts = `engaged with last reply ${Math.round((r.read_previous || 0) * 100)}% · problem ${(r.complexity || 0).toFixed(1)}/3 · own thinking ${(r.own_thinking || 0).toFixed(1)}/3`;
+  let maths = "";
+  if (d) {
+    const parts = `${r.gap_s == null ? "" : `reading ${fmtDur(d.read)} + `}thinking ${fmtDur(d.think)} + writing ${fmtDur(d.write)}`;
+    const raw = d.you;
+    const capped = (raw + 1 < d.read + d.think + d.write
+      ? ` (capped at the ${fmtDur(d.avail != null ? d.avail + (r.typing_ms != null ? d.write : 0) : raw)} that passed)` : "") +
+      (you + 1 < raw ? ` (${fmtDur(raw - you)} overlapped another session and is counted there)` : "");
+    maths = `${parts} → <b>${fmtDur(you)}</b> of your time${capped} × ${Math.round(w * 100)}% = <b>${fmtDur(you * w)}</b> estimated effort`;
+  }
+  return `<div>${kind}</div><div class="updated">${facts}</div>${maths ? `<div class="updated">${maths}</div>` : ""}`;
+}
+
+// ---------- your labels ----------
+const LABEL_VALUE = { yes: 1, partly: 0.5, no: 0 };
+function labelButtons(r) {
+  if (STATIC || !r.pid || !r.pattern) return "";
+  const b = (v, t) => `<button data-pid="${esc(r.pid)}" data-label="${v}" class="${r.label === v ? "on" : ""}">${t}</button>`;
+  return `<div class="lbl" title="Was this prompt productive struggle, in your judgement?">${b("yes", "struggle")}${b("partly", "partly")}${b("no", "not")}</div>`;
+}
+async function setLabel(pid, label) {
+  const r = promptRows.find((x) => x.pid === pid);
+  if (!r) return;
+  const next = r.label === label ? null : label;  // clicking the selected one clears it
+  try {
+    const res = await fetch("/api/label", { method: "POST", headers: { "Content-Type": "application/json", "X-Aitrack": "1" }, body: JSON.stringify({ pid, label: next }) });
+    if (!res.ok) throw new Error((await res.json()).error || res.status);
+    for (const x of promptRows) if (x.pid === pid) { if (next) x.label = next; else delete x.label; }
+    renderPrompts();
+  } catch (e) {
+    $("#labelStats").innerHTML = `<p class="err">Couldn't save the label: ${esc(e.message)}</p>`;
+  }
+}
+const bucket = (w) => (w >= 0.67 ? "yes" : w >= 0.33 ? "partly" : "no");
+function scoreWith(rows, full, floor) {
+  let err = 0, match = 0;
+  for (const r of rows) { const w = weightWith(r, full, floor); err += Math.abs(w - LABEL_VALUE[r.label]); match += bucket(w) === r.label; }
+  return { mae: err / rows.length, match: match / rows.length };
+}
+function renderLabelStats() {
+  const card = $("#labelCard");
+  if (STATIC) { card.hidden = true; return; }
+  card.hidden = !promptRows.some((r) => r.pid && r.pattern);
+  const proj = $("#project").value;
+  const rows = promptRows.filter((r) => r.label && r.pattern && (!proj || r.project === proj));
+  if (!rows.length) { $("#labelStats").innerHTML = `<p class="empty">No labels yet. Use the struggle / partly / not buttons in the Prompts list below.</p>`; return; }
+  const full = Number($("#thinkCut").value) || 2, floor = Number($("#floorCut").value);
+  const now = scoreWith(rows, full, floor);
+  let best = { full, floor, ...now };  // best slider settings for your labels, by grid search
+  for (let f = 0.5; f <= 3.001; f += 0.1) for (let fl = 0; fl <= 1.001; fl += 0.05) {
+    const sc = scoreWith(rows, f, fl);
+    if (sc.mae < best.mae - 1e-9) best = { full: f, floor: fl, ...sc };
+  }
+  const yours = rows.reduce((a, r) => a + allocYou(r) * LABEL_VALUE[r.label], 0);
+  const model = rows.reduce((a, r) => a + allocYou(r) * creditWeight(r), 0);
+  const worst = rows.map((r) => ({ r, d: creditWeight(r) - LABEL_VALUE[r.label] })).sort((a, b) => Math.abs(b.d) - Math.abs(a.d)).slice(0, 5);
+  const tile = (l, v, n) => `<div class="card tile"><div class="label">${l}</div><div class="value">${v}</div><div class="note">${esc(n)}</div></div>`;
+  $("#labelStats").innerHTML = `<div class="lstats">` +
+    tile("Labelled", rows.length, rows.length < 30 ? "aim for 30+ before trusting the fit" : "enough to start trusting the fit") +
+    tile("Agreement", `${Math.round(now.match * 100)}%`, "model's share lands in the same bucket as your label") +
+    tile("Estimated effort, your labels", fmtHM(yours), `model says ${fmtHM(model)} for the same prompts`) +
+    tile("Average gap", `${Math.round(now.mae * 100)} pts`, "between the model's share and yours") +
+    `</div>` +
+    (best.mae < now.mae - 0.005
+      ? `<p class="sub">Best match for your labels: full credit from <b>${best.full.toFixed(1)}</b>, learning kinds at least <b>${Math.round(best.floor * 100)}%</b>, giving ${Math.round(best.match * 100)}% agreement and a ${Math.round(best.mae * 100)}-point average gap. <button id="applyFit">Use these settings</button></p>`
+      : `<p class="sub">The current sliders already match your labels as well as any setting does.</p>`) +
+    `<p class="sub">Biggest disagreements:</p><div class="tablewrap"><table><tbody>` +
+    worst.map(({ r, d }) => `<tr><td>${esc((r.text || r.at).slice(0, 80))}</td><td>you: ${r.label}</td><td>model: ${Math.round(creditWeight(r) * 100)}%</td><td>${esc(PATTERN_NAMES[r.pattern] || r.pattern)}</td><td>${d > 0 ? "model too generous" : "model too strict"}</td></tr>`).join("") +
+    `</tbody></table></div>`;
+  if ($("#applyFit")) $("#applyFit").onclick = () => {
+    $("#thinkCut").value = best.full.toFixed(1); $("#floorCut").value = best.floor.toFixed(2);
+    renderJev(); renderPrompts();
+  };
+}
+
+// What Jev decided for one prompt: every pattern's probability, then its yes/no answers and score.
+function whyJev(r) {
+  const probs = Object.entries(r.pattern_probs || {}).sort((a, b) => b[1] - a[1]);
+  const row = (name, p, dim) => `<span>${esc(name)}</span><div class="bar${dim ? " dim" : ""}" style="width:${Math.round(p * 120)}px"></div><span>${Math.round(p * 100)}%</span>`;
+  let h = probs.map(([k, p], i) => row(PATTERN_NAMES[k] || k, p, i > 0)).join("");
+  h += `<div class="sep"></div>`;
+  h += row("Trying to understand", r.understanding || 0, false);
+  h += row("Engaged with previous reply", r.read_previous || 0, false);
+  h += row("Mostly pasted output", r.pasted_output || 0, false);
+  h += `<span>Own thinking</span><div class="bar" style="width:${Math.round((r.own_thinking || 0) / 3 * 120)}px"></div><span>${(r.own_thinking || 0).toFixed(1)} / 3</span>`;
+  h += `<span>Problem complexity</span><div class="bar" style="width:${Math.round((r.complexity || 0) / 3 * 120)}px"></div><span>${(r.complexity || 0).toFixed(1)} / 3</span>`;
+  return `<div class="why-bars">${h}</div>`;
+}
+
+function openReplayAt(at) {
+  const i = RP.list.findIndex((r) => r.ts === at);
+  if (i < 0) return;
+  stopReplay();
+  RP.idx = i;
+  if ($("#replaySel")) $("#replaySel").value = String(i);
+  location.hash = "#replays";
+  seek(0);
+  playReplay();
+}
+
+// ---------- replays ----------
+const RP = { list: [], key: null, idx: 0, step: 0, cells: [], caret: 0, del: null, playing: false, timer: null };
+const MAX_GAP_MS = 1500;  // a pause longer than this plays as this long
+
+function expand(shape) {
+  const out = [];
+  for (const m of shape.matchAll(/(\d*)([a_n])/g)) {
+    const n = m[1] ? Number(m[1]) : 1;
+    for (let i = 0; i < n; i++) out.push(m[2]);
+  }
+  return out;
+}
+
+async function loadReplays() {
+  const box = $("#replay");
+  let list = [];
+  try { list = (await api(`/api/replays?source=${$("#source").value}`)).replays || []; } catch (e) { list = []; }
+  const proj = $("#project").value;
+  if (proj) list = list.filter((r) => r.project === proj);
+  const key = list.map((r) => r.at).join(",");
+  if (key === RP.key) return;  // nothing new: leave the player alone
+  RP.key = key; RP.list = list;
+  stopReplay();
+  if (!list.length) {
+    box.innerHTML = `<p class="empty">No replays here. They're recorded for prompts typed in Claude Code's terminal (live log only).</p>`;
+    return;
+  }
+  box.innerHTML = `
+    <div class="replay-controls">
+      <select id="replaySel" aria-label="Prompt">${list.map((r, i) => {
+        const when = (r.ts || new Date(r.at).toISOString()).slice(0, 16).replace("T", " ");
+        return `<option value="${i}">${esc(when)} · ${esc(r.project || "?")} · ${fmtDur(r.typing_ms / 1000)} typing · ${r.keys_typed} keys</option>`;
+      }).join("")}</select>
+      <button id="rpPlay">Play</button>
+      <button id="rpRestart">Restart</button>
+      <select id="rpSpeed" aria-label="Speed"><option value="1">1×</option><option value="2" selected>2×</option><option value="4">4×</option><option value="10">10×</option></select>
+    </div>
+    <div class="replay-controls"><input type="range" id="rpScrub" min="0" value="0" aria-label="Position"><span class="updated" id="rpTime"></span></div>
+    <div class="replay-box" id="rpBox" aria-live="off"></div>
+    <div class="replay-meta" id="rpMeta"></div>`;
+  $("#replaySel").onchange = (e) => { stopReplay(); RP.idx = Number(e.target.value); seek(cur().steps.length); };
+  $("#rpPlay").onclick = () => (RP.playing ? stopReplay() : playReplay());
+  $("#rpRestart").onclick = () => { seek(0); playReplay(); };
+  $("#rpScrub").oninput = (e) => { stopReplay(); seek(Number(e.target.value)); };
+  RP.idx = 0;
+  seek(cur().steps.length);  // open on the finished prompt; Play starts from the top
+}
+
+function cur() { return RP.list[RP.idx]; }
+
+function applyStep(i) {
+  const [, a, b, shape] = cur().steps[i];
+  const ins = expand(shape).map((c) => ({ c, born: i }));
+  const removed = b - a;
+  RP.cells.splice(a, removed, ...ins);
+  RP.caret = a + ins.length;
+  RP.del = removed > 0 ? { at: a + ins.length, n: Math.min(removed, 400) } : null;
+}
+
+function seek(k) {
+  const r = cur();
+  RP.cells = expand(r.initial || "").map((c) => ({ c, born: -1 }));
+  RP.caret = RP.cells.length; RP.del = null;
+  k = Math.max(0, Math.min(k, r.steps.length));
+  for (let i = 0; i < k; i++) applyStep(i);
+  RP.step = k;
+  drawReplay();
+}
+
+function drawReplay() {
+  const r = cur(), box = $("#rpBox");
+  if (!box) return;
+  const fresh = RP.step - 6;  // the last few steps' characters are highlighted
+  let html = "";
+  const caretAt = Math.min(RP.caret, RP.cells.length);
+  if (RP.del && RP.del.at === 0 && RP.cells.length) html += `<i class="k del"></i>`.repeat(RP.del.n);
+  RP.cells.forEach((cell, i) => {
+    if (i === caretAt) html += caret();
+    if (cell.c === "n") html += "<br>";
+    else if (cell.c === "_") html += `<i class="s"></i>`;
+    else html += `<i class="k${cell.born >= fresh && cell.born >= 0 ? " new" : ""}"></i>`;
+    if (RP.del && i === RP.del.at - 1) html += `<i class="k del"></i>`.repeat(RP.del.n);
+  });
+  if (caretAt >= RP.cells.length) {
+    if (RP.del && RP.del.at >= RP.cells.length) html += `<i class="k del"></i>`.repeat(RP.del.n);
+    html += caret();
+  }
+  box.innerHTML = html;
+  function caret() { return `<i class="caret"></i>`; }
+
+  const scrub = $("#rpScrub");
+  scrub.max = r.steps.length; scrub.value = RP.step;
+  const tNow = RP.step ? r.steps[RP.step - 1][0] : 0, tEnd = r.steps.length ? r.steps[r.steps.length - 1][0] : 0;
+  $("#rpTime").textContent = `${fmtDur(tNow / 1000)} / ${fmtDur(tEnd / 1000)} · step ${RP.step} of ${r.steps.length}`;
+  $("#rpPlay").textContent = RP.playing ? "Pause" : (RP.step >= r.steps.length ? "Replay" : "Play");
+  const m = (label, v) => v === undefined ? "" : `<span>${label} <b>${v}</b></span>`;
+  $("#rpMeta").innerHTML = [
+    m("typing", fmtDur(r.typing_ms / 1000)), m("start to send", r.compose_ms === undefined ? undefined : fmtDur(r.compose_ms / 1000)),
+    m("keys", r.keys_typed), m("fixes", r.fixes), m("rewrites", r.rewrites), m("revisions", r.revisions),
+    m("pauses", r.pauses), m("pastes", r.pastes),
+    `<span class="badge">${r.verified ? "matches a logged prompt" : "not found in this log"}</span>`,
+    r.truncated ? `<span class="badge">replay cut short (very long draft)</span>` : "",
+  ].join("");
+}
+
+function playReplay() {
+  const r = cur();
+  if (RP.step >= r.steps.length) seek(0);
+  RP.playing = true;
+  tick();
+}
+
+function tick() {
+  const r = cur();
+  if (!RP.playing) return;
+  if (RP.step >= r.steps.length) { stopReplay(); drawReplay(); return; }
+  applyStep(RP.step);
+  RP.step++;
+  drawReplay();
+  if (RP.step >= r.steps.length) { stopReplay(); drawReplay(); return; }
+  const gap = r.steps[RP.step][0] - r.steps[RP.step - 1][0];
+  const speed = Number($("#rpSpeed").value) || 1;
+  RP.timer = setTimeout(tick, Math.max(8, Math.min(gap, MAX_GAP_MS) / speed));
+}
+
+function stopReplay() {
+  RP.playing = false;
+  clearTimeout(RP.timer);
+  if ($("#rpPlay")) $("#rpPlay").textContent = "Play";
+}
+
+// ---------- range (Day / Week / Month / All), relative to the latest day in the data ----------
+let rangeDays = 0;
+function latestDay() {
+  const days = [...(data ? data.rows : []).map((r) => r.day), ...promptRows.map((r) => r.day)].filter(Boolean).sort();
+  return days[days.length - 1] || null;
+}
+function inRange(day) {
+  if (!rangeDays || !day) return true;
+  const last = latestDay();
+  if (!last) return true;
+  const cut = new Date(Date.parse(last + "T12:00:00Z") - (rangeDays - 1) * 86400000).toISOString().slice(0, 10);
+  return day >= cut;
+}
+const RANGE_TITLE = { 0: "All Time", 1: "Today", 7: "This Week", 30: "This Month" };
+
+// ---------- wall-clock helpers (times as recorded, in the recorder's own timezone) ----------
+const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function offsetMin(at) {
+  const m = /([+-])(\d\d):(\d\d)$/.exec(at || "");
+  return m ? (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3])) : 0;
+}
+function wall(ms, off) { return new Date(ms + off * 60000); }  // read with getUTC*
+function clock(d) {
+  const h = d.getUTCHours(), m = String(d.getUTCMinutes()).padStart(2, "0");
+  return `${h % 12 || 12}:${m} ${h < 12 ? "AM" : "PM"}`;
+}
+function shortClock(d) { const h = d.getUTCHours(); return `${h % 12 || 12}:${String(d.getUTCMinutes()).padStart(2, "0")}`; }
+function dayLabel(d) { return `${DOW[d.getUTCDay()]} ${MON[d.getUTCMonth()]} ${d.getUTCDate()}`; }
+function hm(s) {
+  if (s == null) return "–";
+  const m = Math.round(s / 60);
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+}
+
+// ---------- sessions, built from the prompt rows ----------
+function youTimeWith(r, per) { return allocYou(r, per); }
+function sessionTitle(rows) {
+  const r = rows.find((x) => x.text && !/^\[pasted/.test(x.text.trim())) || rows.find((x) => x.text);
+  if (!r) return `${rows[0].project || "Untitled"} session`;
+  let t = r.text.replace(/\[pasted[^\]]*\]\s*/g, "").replace(/\s+/g, " ").trim();
+  if (!t) t = "Pasted text";
+  return t.length > 64 ? t.slice(0, 62).trimEnd() + "…" : t;
+}
+function mostCommon(xs) {
+  const c = new Map(); let best = null, n = 0;
+  for (const x of xs) { const k = (c.get(x) || 0) + 1; c.set(x, k); if (k > n) { n = k; best = x; } }
+  return best;
+}
+function buildSessions() {
+  const proj = $("#project").value;
+  const by = new Map();
+  for (const r of promptRows) {
+    if ((proj && r.project !== proj) || !inRange(r.day)) continue;
+    const k = r.session || "?";
+    if (!by.has(k)) by.set(k, []);
+    by.get(k).push(r);
+  }
+  const out = [];
+  for (const [id, rows] of by) {
+    rows.sort((a, b) => a.at.localeCompare(b.at));
+    let you = 0, eff = 0, ai = 0;
+    const judged = rows.some((r) => r.pattern);
+    for (const r of rows) {
+      const y = allocYou(r);
+      you += y; ai += allocAi(r);
+      if (r.pattern) eff += y * creditWeight(r);
+    }
+    const off = offsetMin(rows[0].at);
+    const t0 = Math.min(...rows.map((r) => Date.parse(r.at) - youTime(r) * 1000));
+    const t1 = Math.max(...rows.map((r) => Date.parse(r.at) + (r.ai_s || 0) * 1000));
+    out.push({ id, rows, you, ai, eff: judged ? eff : null, observed: you + ai, t0, t1, off,
+               project: mostCommon(rows.map((r) => r.project)), title: sessionTitle(rows),
+               typed: rows.some((r) => r.typing_ms != null), judged });
+  }
+  return out.sort((a, b) => b.t0 - a.t0);
+}
+let sessions = [];
+
+function sessionStatus(s) {
+  if (s.observed < 120) return `<span class="quiet">Brief</span>`;
+  if (!s.judged) return `<span class="quiet">Not judged</span>`;
+  if (s.observed > 0 && s.ai / s.observed > 0.75 && s.eff / s.observed < 0.15) return `<span class="quiet">Agent ran mostly alone</span>`;
+  const share = s.observed ? s.eff / s.observed : 0;
+  if (share >= 0.35) return `<span class="dotlabel" style="font-weight:510"><img src="assets/dot-live.svg" alt="">Strong effort</span>`;
+  return `<span class="dotlabel" style="font-weight:510"><img src="assets/dot-submitted.svg" alt="">Some effort</span>`;
+}
+function sessionsTable(list) {
+  if (!list.length) return `<p class="empty">No sessions in this range.</p>`;
+  return `<table class="stable"><thead><tr><th>Session</th><th>Project</th>
+    <th><img src="assets/dot6-observed.svg" alt="">Observed</th><th><img src="assets/dot6-effort.svg" alt="">Est. Effort</th><th>Status</th></tr></thead><tbody>` +
+    list.map((s) => {
+      const d = wall(s.t0, s.off);
+      const tools = s.typed ? "Claude Code · typing recorded" : "Claude Code";
+      return `<tr data-session="${esc(s.id)}" tabindex="0"><td><div class="sname"><b>${esc(s.title)}</b><span>${DOW[d.getUTCDay()]} ${clock(d)} · ${s.rows.length} prompt${s.rows.length === 1 ? "" : "s"} · ${tools}</span></div></td>
+        <td class="proj">${esc(s.project || "?")}</td><td>${hm(s.observed)}</td><td class="eff">${s.eff == null ? "–" : hm(s.eff)}</td><td>${sessionStatus(s)}</td></tr>`;
+    }).join("") + `</tbody></table>`;
+}
+function wireSessionRows(box) {
+  box.querySelectorAll("tr[data-session]").forEach((tr) => {
+    const go = () => { location.hash = "#session-" + tr.getAttribute("data-session"); };
+    tr.onclick = go;
+    tr.onkeydown = (e) => { if (e.key === "Enter") go(); };
+  });
+}
+
+// ---------- overview ----------
+function renderOverview() {
+  if (!data) return;
+  const proj = $("#project").value;
+  const drows = data.rows.filter((r) => (!proj || r.project === proj) && inRange(r.day));
+  const prows = promptRows.filter((r) => (!proj || r.project === proj) && inRange(r.day));
+  const agent = prows.length ? prows.reduce((a, r) => a + allocAi(r), 0) : drows.reduce((a, r) => a + r.ai_only_s, 0);
+  const you = prows.length ? prows.reduce((a, r) => a + allocYou(r), 0) : drows.reduce((a, r) => a + r.you_s, 0);
+  const judged = prows.filter((r) => r.pattern);
+  const eff = judged.reduce((a, r) => a + allocYou(r) * creditWeight(r), 0);
+  const per = Number($("#thinkPer").value), full = Number($("#thinkCut").value) || 1.5, floor = Number($("#floorCut").value);
+  const lo = judged.reduce((a, r) => a + youTimeWith(r, per * 0.5) * weightWith(r, full + 0.5, Math.max(0, floor - 0.25)), 0);
+  const hi = judged.reduce((a, r) => a + youTimeWith(r, per * 1.5) * weightWith(r, Math.max(0.5, full - 0.5), floor), 0);
+  const observed = you + agent;
+  const typed = prows.filter((r) => r.typing_ms != null).length;
+  const measure = (dot, label, value, text, tag) => `<div class="measure"><div class="mhead"><span class="dotlabel"><img src="assets/${dot}" alt="">${label}</span>${tag || ""}</div>
+    <div class="big">${value}</div><p>${text}</p></div>`;
+  $("#measures").innerHTML =
+    measure("dot-observed.svg", "Observed Activity", hm(observed),
+      "Everything the tracker saw: your reading, thinking and typing, plus time the agent ran on its own. So it is not proof of effort.") +
+    measure("dot-effort.svg", "Estimated Effort", judged.length ? hm(eff) : "–",
+      judged.length ? `Range ${hm(lo)} – ${hm(hi)}. Time you spent learning, steering or reasoning, judged by a working hypothesis, not a verdict.`
+                    : "No Jev judgments for this data yet, so effort can't be estimated.",
+      `<span class="tag effort">Estimate</span>`) +
+    measure("dot-submitted.svg", "Your Time", hm(you),
+      `Reading, thinking and typing around ${prows.length} prompt${prows.length === 1 ? "" : "s"}${typed ? `, ${typed} with recorded typing` : ""}. The agent's own time is left out.`);
+
+  const other = Math.max(0, you - (judged.length ? eff : 0));
+  const segs = [
+    judged.length ? [eff, "var(--effort)", "Estimated effort"] : null,
+    [other, judged.length ? "rgba(203,48,224,0.32)" : "var(--accent)", judged.length ? "Your other time" : "Your time"],
+    [agent, "rgba(0,195,208,0.45)", "Agent ran without you"],
+  ].filter((s) => s && s[0] > 0);
+  const tot = segs.reduce((a, s) => a + s[0], 0) || 1;
+  $("#whereTime").innerHTML = `<div class="phead"><h2>Where ${esc(RANGE_TITLE[rangeDays] === "All Time" ? "the Time" : RANGE_TITLE[rangeDays].replace("This ", "This ") + "’s Time")} Went</h2><span class="meta">${hm(observed)} observed</span></div>
+    <div class="stack">${segs.map(([v, c, l]) => `<div style="flex:${v} 1 0;background:${c}" data-tip="${esc(`${l}  ${hm(v)}`)}"></div>`).join("")}</div>
+    <div class="stack-labels">${segs.map(([v, , l]) => `<div style="flex:${v} 1 0"><b>${hm(v)}</b><span>${esc(l)}</span></div>`).join("")}</div>` +
+    (judged.length ? `<div class="note-line"><div class="bracket" style="width:${Math.max(8, Math.round(eff / tot * 100))}%;max-width:45%"></div><span>${Math.round(100 * eff / tot)}% of observed time counts as effort. Observed time alone never does.</span></div>` : "");
+
+  sessions = buildSessions();
+  $("#recentMeta").textContent = `${Math.min(5, sessions.length)} of ${sessions.length}`;
+  $("#recentTable").innerHTML = sessionsTable(sessions.slice(0, 5));
+  wireSessionRows($("#recentTable"));
+  $("#sessionsMeta").textContent = `${sessions.length} session${sessions.length === 1 ? "" : "s"}`;
+  $("#sessionsTable").innerHTML = sessionsTable(sessions);
+  wireSessionRows($("#sessionsTable"));
+  $("#nSessions").textContent = sessions.length || "";
+  $("#nProjects").textContent = new Set(drows.map((r) => r.project)).size || "";
+  $("#nPrompts").textContent = prows.length || "";
+  renderStatus();
+  renderPrivacy();
+  if (currentView === "session") renderSessionDetail(currentSession);
+  updateToolbar();
+}
+
+// ---------- session detail ----------
+function evidenceRows(rows) {
+  const n = rows.length, texts = rows.filter((r) => r.text).length, typed = rows.filter((r) => r.typing_ms != null).length;
+  const judged = rows.filter((r) => r.pattern).length, replays = rows.filter((r) => r.replay).length;
+  const here = STATIC ? `<span class="tag blue">Shown on this page</span>` : `<span class="tag">Stays on this computer</span>`;
+  const row = (icon, title, sub, tag, on) => `<div class="erow"><img src="assets/${icon}" alt=""><div class="etext"><b>${title}</b><span>${sub}</span></div>${tag}<span class="switch${on ? " on" : ""}" role="img" aria-label="${on ? "Collected" : "Not collected"}"></span></div>`;
+  return row("icon-bubble.svg", "Prompts to Claude Code", texts ? `${texts} of ${n} prompts · keys and secrets redacted` : `${n} prompts · text not included`, texts ? here : `<span class="tag">Not included</span>`, texts > 0) +
+    row("icon-keyboard.svg", "Focus & typing rhythm", typed ? `${typed} prompts · counts and timing only, never the keys pressed` : "Not recorded for this data", `<span class="tag">Stays on this computer</span>`, typed > 0) +
+    row("icon-doc.svg", "Jev judgments", judged ? `${judged} prompts labelled · prompt text sent to Hack Club AI to judge` : "Not run for this data", judged ? `<span class="tag effort">Sent for judging</span>` : `<span class="tag">Not sent</span>`, judged > 0) +
+    row("icon-film.svg", "Prompt replays", replays ? `${replays} replays · letter and space layout only` : "None recorded", `<span class="tag">Stays on this computer</span>`, replays > 0) +
+    row("icon-git.svg", "Git commits", "Not collected yet", `<span class="tag">Not collected</span>`, false) +
+    row("icon-camera.svg", "Webcam and screen", "Never collected", `<span class="tag">Not collected</span>`, false);
+}
+function renderPrivacy() {
+  const proj = $("#project").value;
+  const rows = promptRows.filter((r) => !proj || r.project === proj);
+  $("#privacyPanel").innerHTML = `<div class="phead"><h2>Evidence & Privacy</h2><span class="meta">What this data contains</span></div>` + evidenceRows(rows) +
+    `<div class="efoot"><img src="assets/icon-lock13.svg" alt=""><span>Shared by default: the same kind of data Hackatime heartbeats already carry (project, file path, line counts, prompt length, timings). Prompt text and keystroke replays are never logged and only appear here if you turned them on, with secrets removed on a best-effort basis.</span></div>`;
+}
+function niceTickStep(spanMin) {
+  for (const s of [1, 2, 5, 10, 15, 20, 30, 60, 120, 180, 360]) if (spanMin / s <= 7) return s;
+  return 720;
+}
+let currentSession = null;
+function renderSessionDetail(id) {
+  const s = sessions.find((x) => x.id === id) || buildSessions().find((x) => x.id === id);
+  const box = $("#sessionDetail");
+  if (!s) { box.innerHTML = `<div class="panel"><p class="empty">That session isn't in the current data or range.</p></div>`; return; }
+  const span = Math.max(60000, s.t1 - s.t0);
+  const pos = (ms) => Math.max(0, Math.min(100, ((ms - s.t0) / span) * 100));
+  const bar = (cls, a, b, tipText) => `<i class="${cls}" style="left:${pos(a).toFixed(3)}%;width:${Math.max(0.15, pos(b) - pos(a)).toFixed(3)}%" data-tip="${esc(tipText)}"></i>`;
+  let typing = "", yours = "", agent = "", prompts = "", effort = "";
+  let away = 0;
+  for (const r of s.rows) {
+    const at = Date.parse(r.at), y = allocYou(r), w = r.pattern ? creditWeight(r) : 0;
+    const when = clock(wall(at, s.off));
+    const tw = (r.typing_ms || 0);
+    if (tw) typing += bar("obs", at - tw, at, `Typing ${fmtDur(tw / 1000)} · ${r.keys_typed} keys · ${when}`);
+    if (y * 1000 > tw) yours += bar("obs2", at - y * 1000, at - tw, `Reading and thinking ${fmtDur(y - tw / 1000)} before ${when}`);
+    if (r.ai_s) agent += bar("agent", at, at + r.ai_s * 1000, `Agent worked ${fmtDur(r.ai_s)} after ${when}`);
+    prompts += `<i class="prompt" style="left:calc(${pos(at).toFixed(3)}% - 1.5px)" data-tip="${esc(`${when}  ${PATTERN_NAMES[r.pattern] || "not judged"}\n${(r.text || "").slice(0, 140)}`)}"></i>`;
+    if (w > 0 && y > 0) effort += bar("eff", at - y * w * 1000, at, `Effort ${fmtDur(y * w)} (${Math.round(w * 100)}% of ${fmtDur(y)}) · ${PATTERN_NAMES[r.pattern] || ""}`);
+    if (r.away) away++;
+  }
+  const off = s.off, step = niceTickStep(span / 60000) * 60000;
+  const firstTick = Math.ceil((s.t0 + off * 60000) / step) * step - off * 60000;
+  let ticks = `<span style="left:0">${shortClock(wall(s.t0, off))}</span>`;
+  for (let t = firstTick; t < s.t1; t += step) if (pos(t) > 6 && pos(t) < 96) ticks += `<span style="left:${pos(t)}%">${shortClock(wall(t, off))}</span>`;
+  const lane = (dot, name, sub, track) => `<div class="lane"><div class="llabel"><img src="assets/${dot}" alt="">${name}${sub ? ` <span>${sub}</span>` : ""}</div><div class="track">${track}</div></div>`;
+  const learn = s.rows.filter((r) => COUNTS.has(r.pattern));
+  const steer = s.rows.filter((r) => (r.pattern === "direct" || r.pattern === "review_pushback") && (r.own_thinking || 0) >= 1);
+  const judged = s.rows.filter((r) => r.pattern);
+  const avgCx = judged.length ? judged.reduce((a, r) => a + (r.complexity || 0), 0) / judged.length : 0;
+  const learnEff = learn.reduce((a, r) => a + allocYou(r) * creditWeight(r), 0);
+  const test = (ok, title, sub) => `<div class="test"><div class="check${ok ? "" : " no"}">${ok ? `<img src="assets/icon-check.svg" alt="">` : ""}</div><div><b>${title}</b><span>${sub}</span></div></div>`;
+  const d0 = wall(s.t0, off), d1 = wall(s.t1, off);
+  box.innerHTML = `
+    <div class="view">
+      <div class="summary">
+        <div class="stat"><span class="dotlabel"><img src="assets/dot-observed.svg" alt="">Observed</span><b>${hm(s.observed)}</b></div>
+        <div class="stat"><span class="dotlabel"><img src="assets/dot-effort.svg" alt="">Estimated effort</span><b>${s.eff == null ? "–" : hm(s.eff)}</b></div>
+        <div class="stat"><span class="dotlabel"><img src="assets/dot-submitted.svg" alt="">Your time</span><b>${hm(s.you)}</b></div>
+        <span class="tag">${esc($("#source").selectedOptions[0] ? $("#source").selectedOptions[0].textContent : "")}</span>
+      </div>
+      <div class="panel timeline">
+        <div class="phead" style="margin-bottom:0"><h2>Timeline</h2><span class="meta">${clock(d0)} – ${clock(d1)}</span></div>
+        <div class="group observed">OBSERVED ACTIVITY — what the tracker saw</div>
+        ${typing ? lane("dot7-observed.svg", "Typing", "Claude Code", typing) : ""}
+        ${lane("dot7-observed.svg", "Reading & thinking", "", yours)}
+        ${lane("dot7-agent.svg", "Agent ran", "Claude Code", agent)}
+        ${lane("dot7-prompts.svg", "Your prompts", String(s.rows.length), prompts)}
+        <div class="lsep"></div>
+        <div class="group effort">ESTIMATED HUMAN EFFORT — working hypothesis, not a verdict</div>
+        ${lane("dot7-effort.svg", "Est. effort", s.eff == null ? "not judged" : hm(s.eff), effort)}
+        <div class="axis"><div class="gutter"></div><div class="ticks">${ticks}</div></div>
+        <div class="reading"><img src="assets/icon-info.svg" alt=""><span>Agent time never counts as effort; only your reading, thinking and typing around each prompt can.${away ? ` ${away} gap${away === 1 ? " was" : "s were"} cut short because Claude Code logged you away.` : ""}</span></div>
+      </div>
+      <div class="why-evidence">
+        <div class="panel why">
+          <h2>Why ${s.eff == null ? "no estimate" : hm(s.eff).replace(/^0h /, "")}?</h2>
+          <p class="intro">${s.eff == null ? "This session hasn't been judged by Jev, so there is no effort estimate." : "Effort comes from what your prompts show:"}</p>
+          ${test(learn.length > 0, "You asked to understand", learn.length ? `${learn.length} question${learn.length === 1 ? "" : "s"}, checks or reviews · ${fmtDur(learnEff)} of effort` : "No questions about how or why something works")}
+          ${test(steer.length > 0, "You steered it", steer.length ? `${steer.length} prompt${steer.length === 1 ? "" : "s"} directing or correcting the agent with your own reasoning` : "No prompts with your own direction or corrections")}
+          ${test(avgCx >= 1.5, "Into something hard", judged.length ? `Average problem difficulty ${avgCx.toFixed(1)} of 3` : "Not judged")}
+          <div class="caveat"><p>Proposal: these signals are a working hypothesis, not a validated measurement. Hand labels help tune them but can't validate them.</p><a href="#prompts">Disagree With Estimate…</a></div>
+        </div>
+        <div class="panel evidence">
+          <div class="phead"><h2>Evidence & Privacy</h2><span class="meta">Collected</span></div>
+          ${evidenceRows(s.rows)}
+          <div class="efoot"><img src="assets/icon-lock13.svg" alt=""><span>Nothing is sent anywhere except prompts you chose to have judged.</span></div>
+        </div>
+      </div>
+    </div>`;
+  $("#viewTitle").textContent = s.title;
+  $("#viewSub").textContent = `${dayLabel(d0)} · ${clock(d0)} – ${clock(d1)} · ${s.project || "?"}`;
+}
+
+// ---------- sidebar status, toolbar and routing ----------
+function renderStatus() {
+  const last = [...promptRows].sort((a, b) => b.at.localeCompare(a.at))[0];
+  const label = $("#source").selectedOptions[0] ? $("#source").selectedOptions[0].textContent : "";
+  const live = !STATIC && label === "Live log" && last && Date.now() - Date.parse(last.at) < 15 * 60000;
+  $("#trackStatus").classList.toggle("idle", !live);
+  $("#statusTitle").textContent = live ? `Tracking · ${last.project}` : last ? `Last active · ${last.project}` : "No activity yet";
+  $("#statusSub").textContent = STATIC ? `${label} · snapshot` : `${label} · Claude Code`;
+}
+let currentView = "overview";
+const VIEW_TITLES = { overview: null, sessions: "Sessions", projects: "Projects", prompts: "Prompts", replays: "Replays",
+                      effort: "Effort Model", judging: "How It’s Judged", calibration: "Your Labels", privacy: "Privacy" };
+const RANGE_VIEWS = new Set(["overview", "sessions", "projects", "prompts", "effort"]);
+function updateToolbar() {
+  const label = $("#source").selectedOptions[0] ? $("#source").selectedOptions[0].textContent : "";
+  $("#backBtn").hidden = currentView !== "session";
+  $("#primaryBtn").hidden = currentView !== "session";
+  $("#rangeSeg").hidden = !RANGE_VIEWS.has(currentView);
+  if (currentView === "session") return;  // set by renderSessionDetail
+  $("#viewTitle").textContent = VIEW_TITLES[currentView] || RANGE_TITLE[rangeDays];
+  let sub = label;
+  if (currentView === "overview" && data) {
+    const days = data.rows.filter((r) => inRange(r.day)).map((r) => r.day).sort();
+    if (days.length) {
+      const a = new Date(days[0] + "T12:00:00Z"), b = new Date(days[days.length - 1] + "T12:00:00Z");
+      sub = `${MON[a.getUTCMonth()]} ${a.getUTCDate()}${days[0] === days[days.length - 1] ? "" : ` – ${a.getUTCMonth() === b.getUTCMonth() ? "" : MON[b.getUTCMonth()] + " "}${b.getUTCDate()}`}, ${b.getUTCFullYear()} · ${label}`;
+    }
+  }
+  $("#viewSub").textContent = sub;
+}
+function route() {
+  const h = (location.hash || "#overview").slice(1);
+  if (h.startsWith("session-")) { currentView = "session"; currentSession = h.slice(8); }
+  else currentView = VIEW_TITLES.hasOwnProperty(h) ? h : "overview";
+  document.querySelectorAll("[data-view]").forEach((v) => { v.hidden = v.getAttribute("data-view") !== currentView; });
+  document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("on", a.getAttribute("data-nav") === (currentView === "session" ? "sessions" : currentView)));
+  if (currentView === "session") renderSessionDetail(currentSession);
+  updateToolbar();
+  document.querySelector(".content").scrollTop = 0;
+  window.scrollTo(0, 0);
+}
+window.addEventListener("hashchange", route);
+document.querySelectorAll("#rangeSeg button").forEach((b) => b.onclick = () => {
+  rangeDays = Number(b.getAttribute("data-range"));
+  document.querySelectorAll("#rangeSeg button").forEach((x) => x.classList.toggle("on", x === b));
+  render(); renderJev(); promptLimit = 60; renderPrompts();
+});
+route();
+
+init();
+</script>
+</body>
+</html>
